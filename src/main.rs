@@ -101,7 +101,7 @@ pub fn render_world(framebuffer:&mut Framebuffer, player: &Player,maze:&Maze, te
 
         for y in stake_top..stake_bottom{
             let tx = intersect.tx;
-            let ty = (y as f32 -stake_top as f32 ) / (stake_bottom as f32  - stake_top as f32 ) *1216.0;
+            let ty = (y as f32 -stake_top as f32 ) / (stake_bottom as f32  - stake_top as f32 ) *6.0;
 
             let color = texture_cache.get_pixel_color(c,tx as u32, ty as u32);
             framebuffer.set_current_color(color);
@@ -157,8 +157,8 @@ fn draw_sprite(
 
     for x in start_x..end_x {
         for y in start_y..end_y {
-            let tx = ((x - start_x) * 1216 / sprite_size_usize) as u32; //128
-            let ty = ((y - start_y) * 1216 / sprite_size_usize) as u32; //128
+            let tx = ((x - start_x) * 6 / sprite_size_usize) as u32; //128
+            let ty = ((y - start_y) * 6 / sprite_size_usize) as u32; //128
 
             let color = texture_manager.get_pixel_color(enemy.texture_key, tx, ty);
             

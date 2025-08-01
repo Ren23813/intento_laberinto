@@ -16,7 +16,7 @@ impl TextureManager {
         let texture_files = vec![
             // ('+', "assets/wall4.png"),
             // ('-', "assets/wall2.png"),
-            ('|', "assets/wall.png"),
+            ('|', "assets/wallPaint.png"),
             // ('g', "assets/wall5.png"),
             // ('#', "assets/wall3.png"), // default/fallback
         ];
