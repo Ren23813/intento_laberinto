@@ -73,10 +73,11 @@ pub fn render_world(
     framebuffer: &mut Framebuffer,
     player: &Player,
     maze: &Maze,
-    texture_cache: &TextureManager
+    texture_cache: &TextureManager,
+    depth_buffer: &mut [f32],
 ) {
     let block_size = 100;
-    let num_rays = framebuffer.width;
+    let num_rays = framebuffer.width as usize;
 
     let hw = framebuffer.width as f32 / 2.0;
     let hh = framebuffer.height as f32 / 2.0;
@@ -85,6 +86,7 @@ pub fn render_world(
         let current_ray = i as f32 / num_rays as f32;
         let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
         let intersect = cast_ray(framebuffer, maze, player, a, block_size, false);
+        depth_buffer[i] = intersect.distance;
 
         let angle_diff = a - player.a;
         let mut distance_to_wall = intersect.distance * angle_diff.cos();
@@ -104,7 +106,7 @@ pub fn render_world(
 
             let color = texture_cache.get_pixel_color(intersect.impact, tx as u32, ty as u32);
             framebuffer.set_current_color(color);
-            framebuffer.set_pixel(i, y as i32);
+            framebuffer.set_pixel(i as i32, y as i32);
         }
 
         // --- Suelo ---
@@ -123,7 +125,7 @@ pub fn render_world(
 
             let color = texture_cache.get_pixel_color(floor_tex_key, tx as u32, ty as u32);
             framebuffer.set_current_color(color);
-            framebuffer.set_pixel(i, y as i32);
+            framebuffer.set_pixel(i as i32, y as i32);
         }
     }
 }
@@ -135,6 +137,7 @@ fn draw_sprite(
     player: &Player,
     enemy: &Enemy,
     texture_manager: &TextureManager,
+    depth_buffer: &[f32]
 ) {
     let sprite_a = (enemy.pos.y - player.pos.y).atan2(enemy.pos.x - player.pos.x);
     let mut angle_diff = sprite_a - player.a;
@@ -181,19 +184,22 @@ fn draw_sprite(
         (128.0, 128.0)
     };
 
-    for x in start_x..end_x {
+     for x in start_x..end_x {
+        // Ocultación por columna: si sprite está detrás de la pared en esta columna, saltamos toda la columna
+        // depth_buffer usa distancias crudas (igual que sprite_d)
+        if sprite_d >= depth_buffer[x] {
+            continue;
+        }
+
         for y in start_y..end_y {
-            // muestreo en float para mayor precisión
             let tx_f = ((x as f32 - start_x as f32) / sprite_size) * tex_w;
             let ty_f = ((y as f32 - start_y as f32) / sprite_size) * tex_h;
 
-            // clamp a rango válido y cast seguro a u32
             let tx_u32 = tx_f.max(0.0).min(tex_w - 1.0) as u32;
             let ty_u32 = ty_f.max(0.0).min(tex_h - 1.0) as u32;
 
             let color = texture_manager.get_pixel_color(enemy.texture_key, tx_u32, ty_u32);
 
-            // importante: si el pixel es totalmente transparente (alpha == 0) lo saltamos
             if color.a == 0 {
                 continue;
             }
@@ -206,12 +212,12 @@ fn draw_sprite(
 
 
 
-fn render_enemies(framebuffer:&mut Framebuffer, player: &Player, texture_cache: &TextureManager){
+fn render_enemies(framebuffer:&mut Framebuffer, player: &Player, texture_cache: &TextureManager,depth_buffer: &[f32]){
     let enemies = vec![
         Enemy::new(250.0, 250.0, 'e')
     ];
     for enemy in enemies{
-        draw_sprite(framebuffer, &player, &enemy, texture_cache);
+        draw_sprite(framebuffer, &player, &enemy, texture_cache,depth_buffer);
     }
 }
 
@@ -235,6 +241,7 @@ fn main() {
     let maze = load_maze("./maze.txt");
     let mut player = Player{pos:(Vector2::new(180.0,180.0)), a: PI/3.0, fov: PI/2.0 };
     let texture_cache = TextureManager::new(&mut window, &raylib_thread);
+    let mut depth_buffer = vec![f32::INFINITY; window_width as usize];
 
     while !window.window_should_close() {
         framebuffer.clear();
@@ -251,8 +258,9 @@ fn main() {
             render_maze(&mut framebuffer, &maze, block_size,&player);
         }
         else {
-            render_world(&mut framebuffer,&player,&maze,&texture_cache);
-            render_enemies(&mut framebuffer,&player,&texture_cache);
+            for d in depth_buffer.iter_mut() { *d = f32::INFINITY; }
+            render_world(&mut framebuffer,&player,&maze,&texture_cache,&mut depth_buffer);
+            render_enemies(&mut framebuffer,&player,&texture_cache,&depth_buffer);
         }
 
         {
