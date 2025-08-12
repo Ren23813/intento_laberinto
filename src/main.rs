@@ -69,52 +69,65 @@ pub fn render_maze(
     }
 }
 
-pub fn render_world(framebuffer:&mut Framebuffer, player: &Player,maze:&Maze, texture_cache: &TextureManager){
-    // let maze = load_maze("./maze.txt");
+pub fn render_world(
+    framebuffer: &mut Framebuffer,
+    player: &Player,
+    maze: &Maze,
+    texture_cache: &TextureManager
+) {
     let block_size = 100;
     let num_rays = framebuffer.width;
 
-    let hw = framebuffer.width as f32/2.0;
-    let hh = framebuffer.height as f32/2.0;
+    let hw = framebuffer.width as f32 / 2.0;
+    let hh = framebuffer.height as f32 / 2.0;
 
-    framebuffer.set_current_color(Color::WHITE);
-    
-    for i in 0..num_rays{
+    for i in 0..num_rays {
         let current_ray = i as f32 / num_rays as f32;
-        let a = player.a - (player.fov/2.0) + (player.fov*current_ray);
-        let intersect = cast_ray(framebuffer, &maze, &player, a, block_size, false);
-        let d = intersect.distance;
-        let c = intersect.impact;
+        let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
+        let intersect = cast_ray(framebuffer, maze, player, a, block_size, false);
 
-        let angle_diff = a-player.a;
-        let mut distance_to_wall = intersect.distance*angle_diff.cos();
+        let angle_diff = a - player.a;
+        let mut distance_to_wall = intersect.distance * angle_diff.cos();
         if distance_to_wall < 0.1 {
             distance_to_wall = 0.2;
-            // continue; 
         }
-        let stake_height = (hh/distance_to_wall) *70.0;
-        
 
+        // Altura de la pared
+        let stake_height = (hh / distance_to_wall) * 70.0;
         let stake_top = (hh - (stake_height / 2.0)).max(0.0) as usize;
         let stake_bottom = (hh + (stake_height / 2.0)).min(framebuffer.height as f32) as usize;
-        
 
-        for y in stake_top..stake_bottom{
+        // --- Pared ---
+        for y in stake_top..stake_bottom {
             let tx = intersect.tx;
-            let ty = (y as f32 -stake_top as f32 ) / (stake_bottom as f32  - stake_top as f32 ) *6.0;
+            let ty = (y as f32 - stake_top as f32) / (stake_bottom as f32 - stake_top as f32) * 128.0;
 
-            let color = texture_cache.get_pixel_color(c,tx as u32, ty as u32);
+            let color = texture_cache.get_pixel_color(intersect.impact, tx as u32, ty as u32);
             framebuffer.set_current_color(color);
-            // match c {
-            //     '|' => framebuffer.set_current_color(color),
-            //     _ => framebuffer.set_current_color(Color::new(255, 255, 255, 255)), 
-            // }
             framebuffer.set_pixel(i, y as i32);
-
         }
 
+        // --- Suelo ---
+        let floor_tex_key = 'f'; // clave de textura para el suelo en TextureManager
+        for y in stake_bottom..framebuffer.height as usize {
+            // Distancia desde el jugador hasta este punto del suelo
+            let perspective = hh / (y as f32 - hh);
+            let dist = perspective / angle_diff.cos();
+
+            let floor_x = player.pos.x + dist * a.cos();
+            let floor_y = player.pos.y + dist * a.sin();
+
+            // Convertir posición del mundo a coordenadas de textura (128x128)
+            let tx = ((floor_x as usize % block_size) as f32 / block_size as f32) * 200.0;
+            let ty = ((floor_y as usize % block_size) as f32 / block_size as f32) * 150.0;
+
+            let color = texture_cache.get_pixel_color(floor_tex_key, tx as u32, ty as u32);
+            framebuffer.set_current_color(color);
+            framebuffer.set_pixel(i, y as i32);
+        }
     }
 }
+
 
 const TRANSPARENT_COLOR: Color = Color::new(152, 0, 136, 255);
 fn draw_sprite(
@@ -157,8 +170,8 @@ fn draw_sprite(
 
     for x in start_x..end_x {
         for y in start_y..end_y {
-            let tx = ((x - start_x) * 6 / sprite_size_usize) as u32; //128
-            let ty = ((y - start_y) * 6 / sprite_size_usize) as u32; //128
+            let tx = ((x - start_x) * 128 / sprite_size_usize) as u32; //128
+            let ty = ((y - start_y) * 128 / sprite_size_usize) as u32; //128
 
             let color = texture_manager.get_pixel_color(enemy.texture_key, tx, ty);
             
@@ -190,6 +203,7 @@ fn main() {
         .title("Raycaster Example")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
+    window.set_target_fps(60);
 
     let mut framebuffer = Framebuffer::new(window_width as i32, window_height as i32,Color::BLACK);
 
@@ -209,7 +223,7 @@ fn main() {
         if window.is_key_down(KeyboardKey::KEY_M) {
             mode = if mode =="2D" {"3D"} else {"2D"};
         }
-        framebuffer.clear();
+        // framebuffer.clear();
 
         if mode == "2D"{
             render_maze(&mut framebuffer, &maze, block_size,&player);
@@ -219,9 +233,14 @@ fn main() {
             render_enemies(&mut framebuffer,&player,&texture_cache);
         }
 
-        
-            framebuffer.swap_buffers(&mut window, &raylib_thread);
+        {
+    let fps = window.get_fps();
+    let text = format!("FPS: {}", fps);
+    framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
 
-        thread::sleep(Duration::from_millis(16));
+    // Mostrar en ventana
+    framebuffer.swap_buffers(&mut window, &raylib_thread);
+
     }
+}
 }

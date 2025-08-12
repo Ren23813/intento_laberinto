@@ -7,6 +7,8 @@ pub struct Framebuffer{
     background_color:Color,
     current_color:Color,
     pixel_data: Vec<Color>,
+    overlays: Vec<(String, i32, i32, i32, Color)>,
+    reuse_texture: Option<Texture2D>,
 }
 
 impl Framebuffer {
@@ -20,7 +22,9 @@ impl Framebuffer {
             color_buffer,
             background_color,
             current_color: Color::WHITE,
-            pixel_data
+            pixel_data,
+            overlays: Vec::new(),
+            reuse_texture: None,
         }
     }
 
@@ -50,12 +54,35 @@ impl Framebuffer {
         Image::export_image(&self.color_buffer, file_path);
     }
 
-    pub fn swap_buffers(&self, window: &mut RaylibHandle, raylib_thread: &RaylibThread,){
-        if let Ok(texture) = window.load_texture_from_image(raylib_thread, &self.color_buffer){
-            let mut renderer = window.begin_drawing(raylib_thread);
-            renderer.draw_texture(&texture,0,0,Color::WHITE);
+    pub fn swap_buffers(&mut self, window: &mut RaylibHandle, raylib_thread: &RaylibThread) {
+    if let Some(texture) = &mut self.reuse_texture {
+        // calculamos el tamaño en bytes (anchura * altura * 4 bytes por píxel RGBA)
+        let byte_len = (self.width * self.height * 4) as usize;
+
+        let pixels: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                self.color_buffer.data as *const u8,
+                byte_len,
+            )
+        };
+        texture.update_texture(pixels).unwrap();
+    } else {
+        let texture = window
+            .load_texture_from_image(raylib_thread, &self.color_buffer)
+            .expect("Failed to create reuse_texture");
+        self.reuse_texture = Some(texture);
+    }
+
+    if let Some(texture) = &self.reuse_texture {
+        let mut d = window.begin_drawing(raylib_thread);
+        d.draw_texture(texture, 0, 0, Color::WHITE);
+        for (text, x, y, font_size, color) in &self.overlays {
+            d.draw_text(text, *x, *y, *font_size, *color);
         }
     }
+
+    self.overlays.clear();
+}
 
     pub fn get_pixel_color(&self, x: i32, y: i32) -> Option<Color> {
         if x >= 0 && x < self.width && y >= 0 && y < self.height {
@@ -64,6 +91,10 @@ impl Framebuffer {
         } else {
             None
         }
+    }
+
+    pub fn draw_text(&mut self, text: &str, x: i32, y: i32, font_size: i32, color: Color) {
+        self.overlays.push((text.to_string(), x, y, font_size, color));
     }
 
 }
