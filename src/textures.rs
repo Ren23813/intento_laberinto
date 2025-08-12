@@ -18,7 +18,8 @@ impl TextureManager {
             ('+', "assets/pared.png"),
             ('|', "assets/pared.png"),
             ('g', "assets/wallPaint.png"),
-            ('f', "assets/alfombraCIT.png")
+            ('f', "assets/alfombraCIT.png"),
+            ('e', "assets/jack1.png")
         ];
 
         for (ch, path) in texture_files {
