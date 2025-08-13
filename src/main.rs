@@ -82,6 +82,21 @@ pub fn render_world(
     let hw = framebuffer.width as f32 / 2.0;
     let hh = framebuffer.height as f32 / 2.0;
 
+    let ceiling_tex_key = 'c'; 
+    let tex_width = 578.0;
+    let tex_height = 347.0;
+    for y in 0..hh as usize {
+        for x in 0..framebuffer.width as usize {
+            let tx = (x as f32 / framebuffer.width as f32) * tex_width;
+            let ty = (y as f32 / hh) * tex_height;
+
+            let color = texture_cache.get_pixel_color(ceiling_tex_key, tx as u32, ty as u32);
+            framebuffer.set_current_color(color);
+            framebuffer.set_pixel(x as i32, y as i32);
+        }
+    }
+
+    let mut min_stake_top = framebuffer.height as usize; 
     for i in 0..num_rays {
         let current_ray = i as f32 / num_rays as f32;
         let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
@@ -98,6 +113,7 @@ pub fn render_world(
         let stake_height = (hh / distance_to_wall) * 70.0;
         let stake_top = (hh - (stake_height / 2.0)).max(0.0) as usize;
         let stake_bottom = (hh + (stake_height / 2.0)).min(framebuffer.height as f32) as usize;
+        if stake_top < min_stake_top {min_stake_top = stake_top;}
 
         // --- Pared ---
         for y in stake_top..stake_bottom {
@@ -126,7 +142,7 @@ pub fn render_world(
             let color = texture_cache.get_pixel_color(floor_tex_key, tx as u32, ty as u32);
             framebuffer.set_current_color(color);
             framebuffer.set_pixel(i as i32, y as i32);
-        }
+        }   
     }
 }
 
@@ -231,7 +247,7 @@ fn main() {
         .title("Raycaster Example")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
-    window.set_target_fps(60);
+    window.set_target_fps(60); //Creo que hasta aquí llegó raylib (o mi compu), porque se queda colgado en 45fps en mi laptop con cargador...
 
     let mut framebuffer = Framebuffer::new(window_width as i32, window_height as i32,Color::BLACK);
 
