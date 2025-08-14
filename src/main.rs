@@ -193,7 +193,7 @@ fn draw_sprite(
     let end_y = (start_y + sprite_size_usize).min(framebuffer.height as usize);
 
     // obtener tamaño real de la textura desde Texture2D si existe
-    let (tex_w, tex_h) = if let Some(tex) = texture_manager.get_texture(enemy.texture_key) {
+    let (tex_w, tex_h) = if let Some(tex) = texture_manager.get_texture(enemy.current_key()) {
         (tex.width() as f32, tex.height() as f32)
     } else {
         // fallback si no existe la textura
@@ -214,7 +214,8 @@ fn draw_sprite(
             let tx_u32 = tx_f.max(0.0).min(tex_w - 1.0) as u32;
             let ty_u32 = ty_f.max(0.0).min(tex_h - 1.0) as u32;
 
-            let color = texture_manager.get_pixel_color(enemy.texture_key, tx_u32, ty_u32);
+            let key = enemy.current_key();
+            let color = texture_manager.get_pixel_color(key, tx_u32, ty_u32);
 
             if color.a == 0 {
                 continue;
@@ -262,7 +263,8 @@ fn main() {
     let mut player = Player{pos:(Vector2::new(180.0,180.0)), a: PI/3.0, fov: PI/2.0 };
     let texture_cache = TextureManager::new(&mut window, &raylib_thread);
     let mut depth_buffer = vec![f32::INFINITY; window_width as usize];
-    let mut enemies = vec![Enemy::new(250.0, 250.0, 'e')];
+    let mut enemies = vec![Enemy::new(250.0, 250.0, vec!['e', 'E'], 20),
+];
 
 
     while !window.window_should_close() {

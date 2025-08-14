@@ -20,6 +20,7 @@ impl TextureManager {
             ('g', "assets/wallPaint.png"),
             ('f', "assets/alfombraCIT.png"),
             ('e', "assets/jack1.png"),
+            ('E',"assets/jack2.png"),
             ('c',"assets/techo.png")
         ];
 
