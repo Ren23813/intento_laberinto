@@ -228,14 +228,18 @@ fn draw_sprite(
 
 
 
-fn render_enemies(framebuffer:&mut Framebuffer, player: &Player, texture_cache: &TextureManager,depth_buffer: &[f32]){
-    let enemies = vec![
-        Enemy::new(250.0, 250.0, 'e')
-    ];
-    for enemy in enemies{
-        draw_sprite(framebuffer, &player, &enemy, texture_cache,depth_buffer);
+fn render_enemies(
+    framebuffer: &mut Framebuffer,
+    player: &Player,
+    texture_cache: &TextureManager,
+    depth_buffer: &[f32],
+    enemies: &[Enemy],
+) {
+    for enemy in enemies {
+        draw_sprite(framebuffer, player, enemy, texture_cache, depth_buffer);
     }
 }
+
 
 fn main() {
     let window_width = 1300;
@@ -258,12 +262,18 @@ fn main() {
     let mut player = Player{pos:(Vector2::new(180.0,180.0)), a: PI/3.0, fov: PI/2.0 };
     let texture_cache = TextureManager::new(&mut window, &raylib_thread);
     let mut depth_buffer = vec![f32::INFINITY; window_width as usize];
+    let mut enemies = vec![Enemy::new(250.0, 250.0, 'e')];
+
 
     while !window.window_should_close() {
         framebuffer.clear();
         process_events(&window, &mut player, &maze);
         // 1. clear framebuffer
         let mut mode = "3D";
+        let enemy_speed = 2.7;
+        for e in enemies.iter_mut() {
+            e.update(&player, &maze, block_size, enemy_speed);
+        }
 
         if window.is_key_down(KeyboardKey::KEY_M) {
             mode = if mode =="2D" {"3D"} else {"2D"};
@@ -276,7 +286,7 @@ fn main() {
         else {
             for d in depth_buffer.iter_mut() { *d = f32::INFINITY; }
             render_world(&mut framebuffer,&player,&maze,&texture_cache,&mut depth_buffer);
-            render_enemies(&mut framebuffer,&player,&texture_cache,&depth_buffer);
+            render_enemies(&mut framebuffer, &player, &texture_cache, &depth_buffer, &enemies);
         }
 
         {
