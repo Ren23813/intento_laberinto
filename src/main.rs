@@ -79,9 +79,9 @@ pub fn render_world(
     let block_size = 100;
     let num_rays = framebuffer.width as usize;
 
-    let hw = framebuffer.width as f32 / 2.0;
     let hh = framebuffer.height as f32 / 2.0;
 
+    //techo
     let ceiling_tex_key = 'c'; 
     let tex_width = 578.0;
     let tex_height = 347.0;
@@ -125,24 +125,35 @@ pub fn render_world(
             framebuffer.set_pixel(i as i32, y as i32);
         }
 
-        // --- Suelo ---
-        let floor_tex_key = 'f'; // clave de textura para el suelo en TextureManager
-        for y in stake_bottom..framebuffer.height as usize {
-            // Distancia desde el jugador hasta este punto del suelo
+        // --- Suelo (optimizado) ---
+        let floor_tex_key = 'f';
+        let cos_a = a.cos();
+        let sin_a = a.sin();
+        let cos_angle_diff = angle_diff.cos();
+
+        // Saltamos filas para reducir carga: cada 5 píxeles (si no no llega a 60fps xd)
+        let step = 5;
+
+        for y in (stake_bottom..framebuffer.height as usize).step_by(step) {
             let perspective = hh / (y as f32 - hh);
-            let dist = perspective / angle_diff.cos();
+            let dist = perspective / cos_angle_diff;
 
-            let floor_x = player.pos.x + dist * a.cos();
-            let floor_y = player.pos.y + dist * a.sin();
+            let floor_x = player.pos.x + dist * cos_a;
+            let floor_y = player.pos.y + dist * sin_a;
 
-            // Convertir posición del mundo a coordenadas de textura (128x128)
             let tx = ((floor_x as usize % block_size) as f32 / block_size as f32) * 200.0;
             let ty = ((floor_y as usize % block_size) as f32 / block_size as f32) * 150.0;
 
             let color = texture_cache.get_pixel_color(floor_tex_key, tx as u32, ty as u32);
             framebuffer.set_current_color(color);
-            framebuffer.set_pixel(i as i32, y as i32);
-        }   
+
+            // Rellenar los píxeles faltantes entre pasos
+            for dy in 0..step {
+                if y + dy < framebuffer.height as usize {
+                    framebuffer.set_pixel(i as i32, (y + dy) as i32);
+                }
+            }
+        }
     }
 }
 
@@ -241,7 +252,6 @@ fn render_enemies(
     }
 }
 
-
 fn main() {
     let window_width = 1300;
     let window_height = 900;
@@ -252,7 +262,7 @@ fn main() {
         .title("Raycaster Example")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
-    window.set_target_fps(60); //Creo que hasta aquí llegó raylib (o mi compu), porque se queda colgado en 45fps en mi laptop con cargador...
+    window.set_target_fps(60); //fluctúa un poco menos
 
     let mut framebuffer = Framebuffer::new(window_width as i32, window_height as i32,Color::BLACK);
 
@@ -268,7 +278,6 @@ fn main() {
 
 
     while !window.window_should_close() {
-        framebuffer.clear();
         process_events(&window, &mut player, &maze);
         // 1. clear framebuffer
         let mut mode = "3D";
@@ -280,7 +289,6 @@ fn main() {
         if window.is_key_down(KeyboardKey::KEY_M) {
             mode = if mode =="2D" {"3D"} else {"2D"};
         }
-        // framebuffer.clear();
 
         if mode == "2D"{
             render_maze(&mut framebuffer, &maze, block_size,&player);
@@ -296,7 +304,6 @@ fn main() {
     let text = format!("FPS: {}", fps);
     framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
 
-    // Mostrar en ventana
     framebuffer.swap_buffers(&mut window, &raylib_thread);
 
     }
