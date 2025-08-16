@@ -305,6 +305,55 @@ fn main() {
     let text = format!("FPS: {}", fps);
     framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
 
+    // Calcula la distancia mínima del jugador a cualquier enemigo
+    let mut min_enemy_dist = f32::INFINITY;
+    for enemy in enemies.iter() {
+        let dx = enemy.pos.x - player.pos.x;
+        let dy = enemy.pos.y - player.pos.y;
+        let d = (dx*dx + dy*dy).sqrt();
+        if d < min_enemy_dist { min_enemy_dist = d; }
+    }
+
+    // Mapea la distancia a un radio: cuando el enemigo está lejos -> radio grande (visibilidad amplia)
+    // cuando está muy cerca -> radio pequeño (visión casi cerrada).
+    // Define estos parámetros a tu gusto:
+    // calcular min_enemy_dist como ya lo tenías...
+// --- después de calcular min_enemy_dist (la distancia al enemigo más cercano) ---
+
+// parámetros ajustables// --- después de calcular min_enemy_dist ---
+let max_effect_distance = 1500.0_f32; // comienza a afectar desde más lejos
+let min_effect_distance = 80.0_f32;  // muy cerca = círculo mínimo
+let max_radius = (framebuffer.width.min(framebuffer.height)) as f32 * 0.9; // radio máximo
+let min_radius = 40.0_f32; // radio mínimo visible al acercarse mucho
+
+// oscuridad base
+let min_darkness = 0.5_f32; // lejos = oscuridad leve
+let max_darkness = 1.0_f32; // cerca = oscuridad total
+
+// calcular factor de proximidad t en [0..1]
+let t = if min_enemy_dist >= max_effect_distance {
+    0.0_f32
+} else if min_enemy_dist <= min_effect_distance {
+    1.0_f32
+} else {
+    (max_effect_distance - min_enemy_dist) / (max_effect_distance - min_effect_distance)
+};
+
+// radio interpolado
+let radius = max_radius * (1.0 - t) + min_radius * t;
+
+// oscuridad interpolada
+let darkness = min_darkness + (max_darkness - min_darkness) * t;
+
+// centro de pantalla (linterna centrada)
+let center_x = (framebuffer.width / 2) as i32;
+let center_y = (framebuffer.height / 2) as i32;
+
+// aplicar efecto
+framebuffer.draw_vignette(center_x, center_y, radius, darkness);
+
+
+
     framebuffer.swap_buffers(&mut window, &raylib_thread);
 
     }
