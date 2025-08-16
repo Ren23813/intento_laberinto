@@ -38,7 +38,7 @@ pub fn cast_ray(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, a: 
         if 1 <hitx && hitx < block_size -1 {
             maxhit = hitx;
         }
-        let tx = (maxhit  * 128 )/block_size;
+        let tx = (maxhit  * 200 )/block_size;
 
             return Intersect {
                 distance: d,
@@ -55,7 +55,7 @@ pub fn cast_ray(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, a: 
         if 1 <hitx && hitx < block_size -1 {
             maxhit = hitx;
         }
-        let tx = (maxhit  * 128) /block_size;
+        let tx = (maxhit  * 200) /block_size;
 
             return Intersect {
                 distance: d,

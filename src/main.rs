@@ -278,6 +278,7 @@ fn main() {
 
 
     while !window.window_should_close() {
+        framebuffer.clear();
         process_events(&window, &mut player, &maze);
         // 1. clear framebuffer
         let mut mode = "3D";
