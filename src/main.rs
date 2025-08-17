@@ -9,6 +9,8 @@ mod textures;
 mod enemy;
 
 use raylib::prelude::*;
+use std::ffi::CString;
+use raylib::ffi;
 use std::thread;
 use std::time::Duration;
 use framebuffer::Framebuffer;
@@ -262,10 +264,12 @@ fn main() {
         .title("Raycaster Example")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
-    window.set_target_fps(60); //fluctúa un poco menos
+    unsafe {
+        ffi::InitAudioDevice();
+    }
+    window.set_target_fps(60); //fluctúa a un poco menos
 
     let mut framebuffer = Framebuffer::new(window_width as i32, window_height as i32,Color::BLACK);
-
     framebuffer.set_background_color(Color::new(50, 50, 100, 255));
 
     // Load the maze once before the loop
@@ -273,9 +277,14 @@ fn main() {
     let mut player = Player{pos:(Vector2::new(180.0,180.0)), a: PI/3.0, fov: PI/2.0 };
     let texture_cache = TextureManager::new(&mut window, &raylib_thread);
     let mut depth_buffer = vec![f32::INFINITY; window_width as usize];
-    let mut enemies = vec![Enemy::new(250.0, 250.0, vec!['e', 'E'], 20),
-];
+    let mut enemies = vec![Enemy::new(250.0, 250.0, vec!['e', 'E'], 20)];
+    let mut lives: i32 = 3;
+    let max_lives: i32 = 3;
+    let mut invuln_timer: f32 = 0.0;
+    const INVULN_DURATION: f32 = 1.5_f32; 
 
+    let hit_path = CString::new("assets/hit_sound.wav").expect("CString::new failed");
+    let hit_sound = unsafe { ffi::LoadSound(hit_path.as_ptr()) };
 
     while !window.window_should_close() {
         framebuffer.clear();
@@ -286,6 +295,32 @@ fn main() {
         for e in enemies.iter_mut() {
             e.update(&player, &maze, block_size, enemy_speed);
         }
+        let dt = 1.0_f32 / 60.0_f32;
+                if invuln_timer > 0.0 {
+                    invuln_timer -= dt;
+                    if invuln_timer < 0.0 { invuln_timer = 0.0; }
+                }
+
+        let collision_radius = 28.0_f32; // radio en pixeles para considerar "contacto"
+        for enemy in enemies.iter_mut() {
+            let dx = enemy.pos.x - player.pos.x;
+            let dy = enemy.pos.y - player.pos.y;
+            let dist = (dx*dx + dy*dy).sqrt();
+
+            if dist <= collision_radius && invuln_timer <= 0.0 && lives > 0 {
+                // perder 1 vida
+                lives -= 1;
+                invuln_timer = INVULN_DURATION;
+
+                // reproducir sonido si existe
+                unsafe {
+                    ffi::PlaySound(hit_sound);
+                }
+                break;
+            }
+        }
+        // Encolar estado de vidas para que el framebuffer lo dibuje en swap_buffers
+        framebuffer.queue_health(lives, max_lives);
 
         if window.is_key_down(KeyboardKey::KEY_M) {
             mode = if mode =="2D" {"3D"} else {"2D"};
@@ -301,61 +336,55 @@ fn main() {
         }
 
         {
-    let fps = window.get_fps();
-    let text = format!("FPS: {}", fps);
-    framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
+            let fps = window.get_fps();
+            let text = format!("FPS: {}", fps);
+            framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
 
-    // Calcula la distancia mínima del jugador a cualquier enemigo
-    let mut min_enemy_dist = f32::INFINITY;
-    for enemy in enemies.iter() {
-        let dx = enemy.pos.x - player.pos.x;
-        let dy = enemy.pos.y - player.pos.y;
-        let d = (dx*dx + dy*dy).sqrt();
-        if d < min_enemy_dist { min_enemy_dist = d; }
+            // Calcula la distancia mínima del jugador a cualquier enemigo
+            let mut min_enemy_dist = f32::INFINITY;
+            for enemy in enemies.iter() {
+                let dx = enemy.pos.x - player.pos.x;
+                let dy = enemy.pos.y - player.pos.y;
+                let d = (dx*dx + dy*dy).sqrt();
+                if d < min_enemy_dist { min_enemy_dist = d; }
+            }
+
+            let max_effect_distance = 1500.0_f32; // comienza a afectar desde más lejos
+            let min_effect_distance = 80.0_f32;  // muy cerca = círculo mínimo
+            let max_radius = (framebuffer.width.min(framebuffer.height)) as f32 * 0.9; // radio máximo
+            let min_radius = 40.0_f32; // radio mínimo visible al acercarse mucho
+
+            // oscuridad base
+            let min_darkness = 0.5_f32; // lejos = oscuridad leve
+            let max_darkness = 1.0_f32; // cerca = oscuridad total
+
+            // calcular factor de proximidad t en [0..1]
+            let t = if min_enemy_dist >= max_effect_distance {
+                0.0_f32
+            } else if min_enemy_dist <= min_effect_distance {
+                1.0_f32
+            } else {
+                (max_effect_distance - min_enemy_dist) / (max_effect_distance - min_effect_distance)
+            };
+
+            // radio interpolado
+            let radius = max_radius * (1.0 - t) + min_radius * t;
+
+            // oscuridad interpolada
+            let darkness = min_darkness + (max_darkness - min_darkness) * t;
+
+            // centro de pantalla (linterna centrada)
+            let center_x = (framebuffer.width / 2) as i32;
+            let center_y = (framebuffer.height / 2) as i32;
+
+            // aplicar efecto
+            framebuffer.draw_vignette(center_x, center_y, radius, darkness);
+            framebuffer.swap_buffers(&mut window, &raylib_thread);
+        }
     }
 
-    // Mapea la distancia a un radio: cuando el enemigo está lejos -> radio grande (visibilidad amplia)
-    // cuando está muy cerca -> radio pequeño (visión casi cerrada).
-    // Define estos parámetros a tu gusto:
-    // calcular min_enemy_dist como ya lo tenías...
-// --- después de calcular min_enemy_dist (la distancia al enemigo más cercano) ---
-
-// parámetros ajustables// --- después de calcular min_enemy_dist ---
-let max_effect_distance = 1500.0_f32; // comienza a afectar desde más lejos
-let min_effect_distance = 80.0_f32;  // muy cerca = círculo mínimo
-let max_radius = (framebuffer.width.min(framebuffer.height)) as f32 * 0.9; // radio máximo
-let min_radius = 40.0_f32; // radio mínimo visible al acercarse mucho
-
-// oscuridad base
-let min_darkness = 0.5_f32; // lejos = oscuridad leve
-let max_darkness = 1.0_f32; // cerca = oscuridad total
-
-// calcular factor de proximidad t en [0..1]
-let t = if min_enemy_dist >= max_effect_distance {
-    0.0_f32
-} else if min_enemy_dist <= min_effect_distance {
-    1.0_f32
-} else {
-    (max_effect_distance - min_enemy_dist) / (max_effect_distance - min_effect_distance)
-};
-
-// radio interpolado
-let radius = max_radius * (1.0 - t) + min_radius * t;
-
-// oscuridad interpolada
-let darkness = min_darkness + (max_darkness - min_darkness) * t;
-
-// centro de pantalla (linterna centrada)
-let center_x = (framebuffer.width / 2) as i32;
-let center_y = (framebuffer.height / 2) as i32;
-
-// aplicar efecto
-framebuffer.draw_vignette(center_x, center_y, radius, darkness);
-
-
-
-    framebuffer.swap_buffers(&mut window, &raylib_thread);
-
+    unsafe {
+        ffi::UnloadSound(hit_sound);     // liberar memoria del sound
+        ffi::CloseAudioDevice();         // cerrar dispositivo de audio
     }
-}
 }

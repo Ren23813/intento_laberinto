@@ -11,7 +11,7 @@ pub struct Player{
 
 pub fn process_events(window: &RaylibHandle, player: &mut Player, maze: &Maze) {
     const MOVE_SPEED: f32 = 7.0;
-    const ROTATION_SPEED: f32 = PI / 20.0;
+    const ROTATION_SPEED: f32 = PI / 25.0;
 
     let mut new_x = player.pos.x;
     let mut new_y = player.pos.y;

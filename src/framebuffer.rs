@@ -12,6 +12,7 @@ pub struct Framebuffer {
 
     circle_overlays: Vec<(i32, i32, f32, f32)>,
     mask_texture: Option<Texture2D>,
+    health_to_draw: Option<(i32, i32)>, // (current_lives, max_lives)
 
 }
 
@@ -30,7 +31,8 @@ impl Framebuffer {
             overlays: Vec::new(),
             reuse_texture: None,
             circle_overlays: Vec::new(),
-            mask_texture: None
+            mask_texture: None,
+            health_to_draw:None
         }
     }
 
@@ -170,11 +172,41 @@ pub fn swap_buffers(&mut self, window: &mut RaylibHandle, raylib_thread: &Raylib
                 d.draw_texture_pro(mask_tex, src, dest, origin, 0.0, tint);
             }
         }
+
+        // --- dibujar barras de vida ---
+        if let Some((current_lives, max_lives)) = self.health_to_draw {
+            // parámetros visuales
+            let pad_left = 10_i32;
+            let pad_bottom = 10_i32;
+            let bar_w = 140_i32;
+            let bar_h = 18_i32;
+            let spacing = 8_i32;
+
+            // dibujamos barras apiladas verticalmente en la esquina inferior izquierda
+            for i in 0..max_lives {
+                // i=0 -> barra inferior, i=1 -> barra encima, etc.
+                let idx = i as i32;
+                let x = pad_left;
+                let y = (self.height - pad_bottom) - ((idx + 1) * (bar_h + spacing));
+
+                // fondo de la barra (gris)
+                d.draw_rectangle(x, y, bar_w, bar_h, Color::new(60, 60, 60, 200));
+
+                // si la barra está "viva", dibujar en verde (o parcialmente rellenada)
+                if i < current_lives {
+                    d.draw_rectangle(x + 3, y + 3, bar_w - 6, bar_h - 6, Color::new(40, 200, 40, 255));
+                } else {
+                    // barra vacía: un tono más oscuro/rojo tenue
+                    d.draw_rectangle(x + 3, y + 3, bar_w - 6, bar_h - 6, Color::new(120, 0, 0, 200));
+                }
+            }
+        }
     }
 
     // 5) limpiar overlays ya dibujados
     self.overlays.clear();
     self.circle_overlays.clear();
+    self.health_to_draw = None;
 }
 
 
@@ -233,5 +265,8 @@ pub fn swap_buffers(&mut self, window: &mut RaylibHandle, raylib_thread: &Raylib
         }
     }
 
+     pub fn queue_health(&mut self, current: i32, max: i32) {
+        self.health_to_draw = Some((current, max));
+    }
     
 }
