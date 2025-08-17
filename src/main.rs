@@ -285,8 +285,12 @@ fn main() {
 
     let hit_path = CString::new("assets/hit_sound.wav").expect("CString::new failed");
     let hit_sound = unsafe { ffi::LoadSound(hit_path.as_ptr()) };
+    let music_path = CString::new("assets/music.ogg").expect("CString::new failed");
+    let music = unsafe { ffi::LoadMusicStream(music_path.as_ptr()) };
+    unsafe { ffi::PlayMusicStream(music); }
 
     while !window.window_should_close() {
+        unsafe { ffi::UpdateMusicStream(music); }
         framebuffer.clear();
         process_events(&window, &mut player, &maze);
         // 1. clear framebuffer
@@ -385,6 +389,8 @@ fn main() {
 
     unsafe {
         ffi::UnloadSound(hit_sound);     // liberar memoria del sound
+        ffi::StopMusicStream(music);
+        ffi::UnloadMusicStream(music);
         ffi::CloseAudioDevice();         // cerrar dispositivo de audio
     }
 }
