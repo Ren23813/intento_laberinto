@@ -13,6 +13,7 @@ use std::ffi::CString;
 use raylib::ffi;
 use std::thread;
 use std::time::Duration;
+use std::collections::VecDeque;
 use framebuffer::Framebuffer;
 use maze::{Maze,load_maze};
 use player::Player;
@@ -22,6 +23,17 @@ use enemy::Enemy;
 
 use crate::{caster::cast_ray, player::process_events};
 
+
+fn maze_filename_for_level(level: i32) -> &'static str {
+    // Alterna entre maze_odd y maze_even excepto el nivel final 7
+    if level == 7 {
+        "maze_final.txt"
+    } else if level % 2 == 0 {
+        "maze_even.txt"
+    } else {
+        "maze_odd.txt"
+    }
+}
 
 fn draw_cell(
     framebuffer: &mut Framebuffer,
@@ -449,6 +461,219 @@ pub fn draw_minimap(
 }
 
 
+fn tile_center_pos(i: usize, j: usize, block_size: usize) -> Vector2 {
+    Vector2::new(
+        i as f32 * block_size as f32 + (block_size as f32) * 0.5,
+        j as f32 * block_size as f32 + (block_size as f32) * 0.5,
+    )
+}
+
+/// Busca la primera celda con carácter `ch` en el laberinto y devuelve (i,j).
+fn find_tile(maze: &Maze, ch: char) -> Option<(usize, usize)> {
+    for (j, row) in maze.iter().enumerate() {
+        for (i, &c) in row.iter().enumerate() {
+            if c == ch {
+                return Some((i, j));
+            }
+        }
+    }
+    None
+}
+
+/// Busca la celda transitable más cercana al centro del mapa (espiral simple).
+/// Devuelve la posición central (en píxeles) de esa celda.
+fn find_nearest_free_to_center(maze: &Maze, block_size: usize) -> Vector2 {
+    let h = maze.len();
+    if h == 0 {
+        return Vector2::new(block_size as f32 * 0.5, block_size as f32 * 0.5);
+    }
+    let w = maze[0].len();
+
+    let cx = (w / 2) as isize;
+    let cy = (h / 2) as isize;
+
+    let max_r = (w.max(h) / 2) as isize + 4;
+
+    for r in 0..=max_r {
+        // recorremos un "anillo" alrededor del centro
+        for dx in -r..=r {
+            for dy in -r..=r {
+                // solo bordes del anillo
+                if dx.abs() != r && dy.abs() != r { continue; }
+                let ix = cx + dx;
+                let iy = cy + dy;
+                if ix < 0 || iy < 0 { continue; }
+                let (ixu, iyu) = (ix as usize, iy as usize);
+                if iyu >= h || ixu >= w { continue; }
+                let c = maze[iyu][ixu];
+                if c == ' ' || c == 'g' {
+                    return tile_center_pos(ixu, iyu, block_size);
+                }
+            }
+        }
+    }
+
+    // fallback: primera celda (0,0)
+    tile_center_pos(0, 0, block_size)
+}
+
+/// Busca la celda transitable más cercana a (center_i, center_j) — espiral limitada por `max_r` (en celdas).
+/// Devuelve la posición central (en píxeles) de la celda encontrada.
+fn find_nearest_free_around(maze: &Maze, block_size: usize, center_i: usize, center_j: usize, max_r: usize) -> Vector2 {
+    let h = maze.len();
+    if h == 0 {
+        return tile_center_pos(0, 0, block_size);
+    }
+    let w = maze[0].len();
+
+    // convertimos a isize para poder movernos en anillos negativos
+    let cx = center_i as isize;
+    let cy = center_j as isize;
+
+    let max_r_is = max_r as isize;
+    for r in 0..=max_r_is {
+        // recorrer el "borde" del anillo r alrededor de (cx,cy)
+        for dx in -r..=r {
+            for dy in -r..=r {
+                if dx.abs() != r && dy.abs() != r { continue; } // solo borde
+                let ix = cx + dx;
+                let iy = cy + dy;
+                if ix < 0 || iy < 0 { continue; }
+                let (ixu, iyu) = (ix as usize, iy as usize);
+                if iyu >= h || ixu >= w { continue; }
+                let c = maze[iyu][ixu];
+                if c == ' ' || c == 'g' {
+                    return tile_center_pos(ixu, iyu, block_size);
+                }
+            }
+        }
+    }
+
+    find_nearest_free_to_center(maze, block_size)
+}
+
+fn find_spawn_reachable(
+    maze: &Maze,
+    block_size: usize,
+    player_pos: Vector2,
+    min_dist_cells: usize, 
+) -> Vector2 {
+    let h = maze.len();
+    if h == 0 {
+        return tile_center_pos(0, 0, block_size);
+    }
+    let w = maze[0].len();
+
+    // cell indices del jugador (clamped dentro del maze)
+    let mut pi = (player_pos.x / block_size as f32).floor() as isize;
+    let mut pj = (player_pos.y / block_size as f32).floor() as isize;
+    if pi < 0 { pi = 0 }
+    if pj < 0 { pj = 0 }
+    if pj as usize >= h { pj = (h-1) as isize }
+    if pi as usize >= w { pi = (w-1) as isize }
+
+    let start_i = pi as usize;
+    let start_j = pj as usize;
+
+    let mut visited = vec![vec![false; w]; h];
+    let mut q = VecDeque::new();
+    q.push_back((start_i, start_j));
+    visited[start_j][start_i] = true;
+
+    let mut reachable = Vec::<(usize, usize)>::new();
+
+    while let Some((i, j)) = q.pop_front() {
+        // solo contar celdas que sean transitables
+        let ch = maze[j][i];
+        if ch == ' ' || ch == 'g' {
+            reachable.push((i, j));
+            // expandir 4 vecinos
+            let neighbors = [
+                (i as isize + 1, j as isize),
+                (i as isize - 1, j as isize),
+                (i as isize, j as isize + 1),
+                (i as isize, j as isize - 1),
+            ];
+            for (nx, ny) in neighbors.iter() {
+                if *nx < 0 || *ny < 0 { continue; }
+                let nxu = *nx as usize;
+                let nyu = *ny as usize;
+                if nyu >= h || nxu >= w { continue; }
+                if visited[nyu][nxu] { continue; }
+                let c = maze[nyu][nxu];
+                // solo entrar en celdas que no sean paredes
+                if c == ' ' || c == 'g' {
+                    visited[nyu][nxu] = true;
+                    q.push_back((nxu, nyu));
+                }
+            }
+        }
+    }
+
+    // Si no hay celdas alcanzables, fallback al centro aproximado
+    if reachable.is_empty() {
+        return find_nearest_free_to_center(maze, block_size);
+    }
+
+    // Centro del mapa en coords de celda (floats)
+    let center_fx = (w as f32 - 1.0) * 0.5;
+    let center_fy = (h as f32 - 1.0) * 0.5;
+
+    // posición celda jugador (para medir separación mínima)
+    let player_ci = start_i as isize;
+    let player_cj = start_j as isize;
+
+    // elegir la celda alcanzable que esté más cerca del centro
+    // pero que además cumpla la restricción de min_dist_cells (si es posible)
+    let mut best: Option<(usize, usize, f32)> = None;
+
+    for &(i, j) in &reachable {
+        // distancia en celdas al jugador
+        let dxp = (i as isize - player_ci).abs() as usize;
+        let dyp = (j as isize - player_cj).abs() as usize;
+        let manh_dist = dxp.max(dyp); // métrica simple
+
+        if manh_dist < min_dist_cells {
+            continue; // saltar, queremos separación
+        }
+
+        let dx = (i as f32) - center_fx;
+        let dy = (j as f32) - center_fy;
+        let dist_center = (dx*dx + dy*dy).sqrt();
+
+        match best {
+            None => best = Some((i, j, dist_center)),
+            Some((_, _, best_d)) => {
+                if dist_center < best_d {
+                    best = Some((i, j, dist_center));
+                }
+            }
+        }
+    }
+    // Si no encontramos con la restricción min_dist_cells, relajarla
+    if best.is_none() && min_dist_cells > 0 {
+        for &(i, j) in &reachable {
+            let dx = (i as f32) - center_fx;
+            let dy = (j as f32) - center_fy;
+            let dist_center = (dx*dx + dy*dy).sqrt();
+            match best {
+                None => best = Some((i, j, dist_center)),
+                Some((_, _, best_d)) => {
+                    if dist_center < best_d {
+                        best = Some((i, j, dist_center));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((bi, bj, _)) = best {
+        tile_center_pos(bi, bj, block_size)
+    } else {
+        // fallback
+        find_nearest_free_to_center(maze, block_size)
+    }
+}
 
 
 fn main() {
@@ -469,8 +694,12 @@ fn main() {
     let mut framebuffer = Framebuffer::new(window_width as i32, window_height as i32,Color::BLACK);
     framebuffer.set_background_color(Color::new(50, 50, 100, 255));
 
+    let levels = vec![3, 4, 5, 6, 7]; // pisos
+    let mut level_index: usize = 0; // comienza en levels[0] = piso 3
+    let mut current_level = levels[level_index];
+
     // Load the maze once before the loop
-    let maze = load_maze("./maze_even.txt");
+    let mut maze = load_maze(maze_filename_for_level(current_level));
     let mut player = Player{pos:(Vector2::new(180.0,180.0)), a: PI/3.0, fov: PI/2.0 };
     let texture_cache = TextureManager::new(&mut window, &raylib_thread);
     let mut depth_buffer = vec![f32::INFINITY; window_width as usize];
@@ -479,6 +708,8 @@ fn main() {
     let max_lives: i32 = 3;
     let mut invuln_timer: f32 = 0.0;
     const INVULN_DURATION: f32 = 1.5_f32; 
+    let base_enemy_speed = 2.7_f32;
+    let mut levels_passed: usize = 0; 
 
     let hit_path = CString::new("assets/hit_sound.wav").expect("CString::new failed");
     let hit_sound = unsafe { ffi::LoadSound(hit_path.as_ptr()) };
@@ -486,17 +717,25 @@ fn main() {
     let music = unsafe { ffi::LoadMusicStream(music_path.as_ptr()) };
     unsafe { ffi::PlayMusicStream(music); }
 
+    let mut level_transition_cooldown: f32 = 0.0;
+    const LEVEL_TRANSITION_COOLDOWN: f32 = 0.6_f32;
+
     while !window.window_should_close() {
         unsafe { ffi::UpdateMusicStream(music); }
+        let dt = 1.0_f32 / 60.0_f32;
+        if level_transition_cooldown > 0.0 {
+            level_transition_cooldown -= dt;
+            if level_transition_cooldown < 0.0 { level_transition_cooldown = 0.0; }
+        }
+
         framebuffer.clear();
         process_events(&window, &mut player, &maze);
         // 1. clear framebuffer
         let mut mode = "3D";
-        let enemy_speed = 2.7;
+        let enemy_speed = base_enemy_speed + 0.2_f32 * (levels_passed as f32);
         for e in enemies.iter_mut() {
             e.update(&player, &maze, block_size, enemy_speed);
         }
-        let dt = 1.0_f32 / 60.0_f32;
                 if invuln_timer > 0.0 {
                     invuln_timer -= dt;
                     if invuln_timer < 0.0 { invuln_timer = 0.0; }
@@ -527,6 +766,80 @@ fn main() {
             mode = if mode =="2D" {"3D"} else {"2D"};
         }
 
+        let cell_i = ((player.pos.x / block_size as f32).floor() as isize).max(0) as usize;
+        let cell_j = ((player.pos.y / block_size as f32).floor() as isize).max(0) as usize;
+        let at_exit = maze.get(cell_j).and_then(|row| row.get(cell_i)).map_or(false, |&c| c == 'g');
+
+        if at_exit && level_transition_cooldown <= 0.0 {
+            // guardamos coordenada de salida en el mapa antiguo (la 'g' donde el jugador estaba)
+            let prev_exit = Some((cell_i, cell_j));
+
+            // avanzar de nivel (si hay)
+            if level_index + 1 < levels.len() {
+                level_index += 1;
+                current_level = levels[level_index];
+                // re-cargar maze nuevo (destino)
+                let filename = maze_filename_for_level(current_level);
+                let new_maze = load_maze(filename);
+
+                // --- COLOCAR JUGADOR en la misma CELDA (pi,pj) del mapa anterior ---
+                if let Some((pi, pj)) = prev_exit {
+                    let maze_h_new = new_maze.len();
+                    let maze_w_new = if maze_h_new > 0 { new_maze[0].len() } else { 0 };
+
+                    if pi < maze_w_new && pj < maze_h_new {
+                        // si la misma celda existe en el nuevo mapa y es transitable -> colocamos ahí
+                        let ch = new_maze[pj][pi];
+                        if ch == ' ' || ch == 'g' {
+                            player.pos = tile_center_pos(pi, pj, block_size);
+                        } else {
+                            // si en el nuevo mapa esa celda es pared, buscamos alrededor de esa celda
+                            player.pos = find_nearest_free_around(&new_maze, block_size, pi, pj, 8);
+                        }
+                    } else {
+                        // la celda está fuera de límites en el nuevo mapa: hacemos clamp y buscamos alrededor
+                        let clamped_i = if maze_w_new == 0 { 0 } else { pi.min(maze_w_new.saturating_sub(1)) };
+                        let clamped_j = if maze_h_new == 0 { 0 } else { pj.min(maze_h_new.saturating_sub(1)) };
+                        player.pos = find_nearest_free_around(&new_maze, block_size, clamped_i, clamped_j, 8);
+                    }
+                } else {
+                    // si por alguna razón no teníamos prev_exit, fallback al centro libre
+                    player.pos = find_nearest_free_to_center(&new_maze, block_size);
+                }
+                player.a = PI / 3.0; // reiniciar la rotación
+                let enemy_spawn = find_spawn_reachable(&new_maze, block_size, player.pos, 3);
+                enemies = vec![Enemy::new(enemy_spawn.x, enemy_spawn.y, vec!['e','E'], 20)];
+                // refill vidas
+                lives = max_lives;
+                invuln_timer = 0.0;
+                // aumentar contador de niveles completados
+                levels_passed += 1;
+                // re-asignar el maze cargado (nuevo)
+                maze = new_maze;
+                // cooldown para evitar triggers repetidos
+                level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
+            } else {
+                // último nivel: reiniciamos al primero (o podrías mostrar pantalla de victoria)
+                println!("Has llegado al final (piso {}). Reiniciando.", current_level);
+                level_index = 0;
+                current_level = levels[level_index];
+                maze = load_maze(maze_filename_for_level(current_level));
+                // spawn player en la 'g' si existe, o centro libre
+                if let Some((gi, gj)) = find_tile(&maze, 'g') {
+                    player.pos = tile_center_pos(gi, gj, block_size);
+                } else {
+                    player.pos = find_nearest_free_to_center(&maze, block_size);
+                }
+                // reset enemigo al centro del nuevo mapa
+                let ec = find_nearest_free_to_center(&maze, block_size);
+                enemies = vec![Enemy::new(ec.x, ec.y, vec!['e', 'E'], 20)];
+                lives = max_lives;
+                levels_passed = 0;
+                level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
+            }
+        }
+
+
         if mode == "2D"{
             render_maze(&mut framebuffer, &maze, block_size,&player);
         }
@@ -541,6 +854,13 @@ fn main() {
             let fps = window.get_fps();
             let text = format!("FPS: {}", fps);
             framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
+
+            let piso_text = format!("piso {}", current_level);
+            let font_size = 28;
+            // ancho aproximado (estimación) para centrar: asumir 0.6 * font_size por carácter
+            let approx_text_width = piso_text.len() as f32 * (font_size as f32) * 0.6;
+            let x_center = (framebuffer.width as f32 / 2.0 - approx_text_width / 2.0) as i32;
+            framebuffer.draw_text(&piso_text, x_center, 6, font_size, Color::YELLOW);
 
             // Calcula la distancia mínima del jugador a cualquier enemigo
             let mut min_enemy_dist = f32::INFINITY;
@@ -583,6 +903,8 @@ fn main() {
             framebuffer.draw_vignette(center_x, center_y, radius, darkness);
             framebuffer.swap_buffers(&mut window, &raylib_thread);
         }
+                // thread::sleep(Duration::from_millis(1));
+
     }
 
     unsafe {
