@@ -49,27 +49,95 @@ pub fn render_maze(
     block_size: usize,
     player: &Player
 ) {
+    // Padding en píxeles alrededor del mapa 2D
+    let pad = 16.0_f32;
+
+    let maze_h = maze.len();
+    let maze_w = if maze_h > 0 { maze[0].len() } else { 0 };
+    if maze_w == 0 || maze_h == 0 {
+        return;
+    }
+
+    // Tamaño del mundo en px (coordenadas del juego)
+    let world_w = (maze_w * block_size) as f32;
+    let world_h = (maze_h * block_size) as f32;
+
+    // Escala para que todo quepa en la ventana (con padding)
+    let avail_w = (framebuffer.width as f32) - pad * 2.0;
+    let avail_h = (framebuffer.height as f32) - pad * 2.0;
+    let scale_x = avail_w / world_w;
+    let scale_y = avail_h / world_h;
+    // usar la menor para que quepa entero; si es >1, permitimos escalar hacia arriba
+    let scale = scale_x.min(scale_y);
+
+    // Origen (arriba-izquierda) para centrar el laberinto
+    let offset_x = ((framebuffer.width as f32) - world_w * scale) / 2.0;
+    let offset_y = ((framebuffer.height as f32) - world_h * scale) / 2.0;
+
+    // Dibujar celdas (paredes)
     for (row_index, row) in maze.iter().enumerate() {
         for (col_index, &cell) in row.iter().enumerate() {
-            let xo = col_index * block_size;
-            let yo = row_index * block_size;
-            
-            draw_cell(framebuffer, xo, yo, block_size, cell);
+            if cell == ' ' { continue; }
+            let cell_x = offset_x + (col_index as f32) * (block_size as f32) * scale;
+            let cell_y = offset_y + (row_index as f32) * (block_size as f32) * scale;
+            let cell_w = (block_size as f32) * scale;
+            let cell_h = (block_size as f32) * scale;
+
+            // color de pared (ajusta si quieres)
+            framebuffer.set_current_color(Color::new(200, 40, 40, 255));
+            let ix0 = cell_x.floor() as i32;
+            let iy0 = cell_y.floor() as i32;
+            let ix1 = (cell_x + cell_w).ceil() as i32;
+            let iy1 = (cell_y + cell_h).ceil() as i32;
+            for px in ix0..ix1 {
+                for py in iy0..iy1 {
+                    framebuffer.set_pixel(px, py);
+                }
+            }
         }
     }
 
-    //draw player
+    // Dibujar jugador (posición escalada)
+    let player_sx = offset_x + player.pos.x * scale;
+    let player_sy = offset_y + player.pos.y * scale;
     framebuffer.set_current_color(Color::WHITE);
-    framebuffer.set_pixel(player.pos.x as i32, player.pos.y as i32);
+    let pxi = player_sx as i32;
+    let pyi = player_sy as i32;
+    for dx in -2..=2 {
+        for dy in -2..=2 {
+            framebuffer.set_pixel(pxi + dx, pyi + dy);
+        }
+    }
 
-    //dibujar n rayos
-    let num_rays = 5; //framebuffer.width;
+    // Dibujar rayos (debug) escalados — usamos cast_ray con draw_line=false y calculamos punta
+    let num_rays = 32usize.min(16); // ajustable
     for i in 0..num_rays {
         let current_ray = i as f32 / num_rays as f32;
-        let a = player.a -(player.fov/2.0)+(player.fov*current_ray);
-        cast_ray(framebuffer, maze, player, a,block_size,true);
+        let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
+        // pedimos pero sin dibujar
+        let intersect = cast_ray(framebuffer, maze, player, a, block_size, false);
+
+        // Punto de impacto en coordenadas del mundo
+        let d = intersect.distance;
+        let ix_world = player.pos.x + d * a.cos();
+        let iy_world = player.pos.y + d * a.sin();
+
+        // convertir a coordenadas de pantalla escaladas
+        let sx = offset_x + ix_world * scale;
+        let sy = offset_y + iy_world * scale;
+
+        // dibujar línea desde jugador hasta impacto (muestreo simple)
+        let steps = ((d * scale).max(4.0)) as usize;
+        framebuffer.set_current_color(Color::new(255, 255, 255, 255));
+        for s in 0..=steps {
+            let t = s as f32 / (steps as f32).max(1.0);
+            let lx = player_sx + (sx - player_sx) * t;
+            let ly = player_sy + (sy - player_sy) * t;
+            framebuffer.set_pixel(lx as i32, ly as i32);
+        }
     }
 }
+
 
 pub fn render_world(
     framebuffer: &mut Framebuffer,
@@ -264,8 +332,8 @@ pub fn draw_minimap(
     block_size: usize,
 ) {
     // Tamaño del minimapa en píxeles (ajusta si quieres más grande/pequeño)
-    const MAP_W: usize = 220;
-    const MAP_H: usize = 150;
+    const MAP_W: usize = 260;
+    const MAP_H: usize = 160;
     const PAD: usize = 10;
 
     let fb_w = framebuffer.width as usize;
@@ -278,22 +346,25 @@ pub fn draw_minimap(
     // Dimensiones del mundo en píxeles (según laberinto)
     let maze_h = maze.len();
     let maze_w = if maze_h > 0 { maze[0].len() } else { 0 };
+    if maze_w == 0 || maze_h == 0 { return; }
+
     let world_w = (maze_w * block_size) as f32;
     let world_h = (maze_h * block_size) as f32;
-
-    // Si el laberinto está vacío, no dibujamos
-    if maze_w == 0 || maze_h == 0 { return; }
 
     // escala del mundo -> minimapa (mantener proporción)
     let scale_x = MAP_W as f32 / world_w;
     let scale_y = MAP_H as f32 / world_h;
-    // usamos la menor para que todo quepa
     let scale = scale_x.min(scale_y);
 
-    // Color de fondo del minimapa (oscuro semitransparente)
+    // centrar el mapa dentro del recuadro minimapa
+    let used_w = world_w * scale;
+    let used_h = world_h * scale;
+    let inner_offset_x = origin_x as f32 + ((MAP_W as f32 - used_w) / 2.0);
+    let inner_offset_y = origin_y as f32 + ((MAP_H as f32 - used_h) / 2.0);
+
+    // fondo minimapa
     let bg = Color::new(10, 10, 10, 220);
     framebuffer.set_current_color(bg);
-    // rellenar fondo (MAP_W x MAP_H)
     for mx in 0..MAP_W {
         for my in 0..MAP_H {
             framebuffer.set_pixel((origin_x + mx) as i32, (origin_y + my) as i32);
@@ -305,20 +376,15 @@ pub fn draw_minimap(
     for j in 0..maze_h {
         for i in 0..maze_w {
             let ch = maze[j][i];
-            if ch == ' ' || ch == 'g' { continue; } // transitable
-            // rect de la celda en coordenadas mundo (px)
-            let cell_x = (i * block_size) as f32;
-            let cell_y = (j * block_size) as f32;
-            // mapear a minimapa
-            let sx = origin_x as f32 + cell_x * scale;
-            let sy = origin_y as f32 + cell_y * scale;
-            let sw = (block_size as f32 * scale).max(1.0);
-            let sh = (block_size as f32 * scale).max(1.0);
-            let ix0 = sx.floor() as i32;
-            let iy0 = sy.floor() as i32;
-            let ix1 = (sx + sw).ceil() as i32;
-            let iy1 = (sy + sh).ceil() as i32;
-
+            if ch == ' ' || ch == 'g' { continue; }
+            let cell_x = inner_offset_x + (i as f32) * (block_size as f32) * scale;
+            let cell_y = inner_offset_y + (j as f32) * (block_size as f32) * scale;
+            let sw = (block_size as f32) * scale;
+            let sh = (block_size as f32) * scale;
+            let ix0 = cell_x.floor() as i32;
+            let iy0 = cell_y.floor() as i32;
+            let ix1 = (cell_x + sw).ceil() as i32;
+            let iy1 = (cell_y + sh).ceil() as i32;
             framebuffer.set_current_color(wall_color);
             for px in ix0..ix1 {
                 for py in iy0..iy1 {
@@ -328,40 +394,36 @@ pub fn draw_minimap(
         }
     }
 
-    // Dibujar jugador como punto blanco y una pequeña línea que indique la dirección
-    let player_color = Color::WHITE;
-    let px = origin_x as f32 + player.pos.x * scale;
-    let py = origin_y as f32 + player.pos.y * scale;
+    // Dibujar player como punto con flecha de dirección (escala apropiada)
+    let px = inner_offset_x + player.pos.x * scale;
+    let py = inner_offset_y + player.pos.y * scale;
     let pxi = px as i32;
     let pyi = py as i32;
-
-    framebuffer.set_current_color(player_color);
-    // punto central 3x3
+    framebuffer.set_current_color(Color::WHITE);
     for dx in -2..=2 {
         for dy in -2..=2 {
             framebuffer.set_pixel(pxi + dx, pyi + dy);
         }
     }
-    // dirección (un pequeño rayo)
-    let dir_len_world = 40.0_f32; // longitud en coordenadas del mundo
-    let dir_x = player.pos.x + player.a.cos() * dir_len_world;
-    let dir_y = player.pos.y + player.a.sin() * dir_len_world;
-    let dir_sx = origin_x as f32 + dir_x * scale;
-    let dir_sy = origin_y as f32 + dir_y * scale;
-    // dibuja una línea simple entre (px,py) y (dir_sx,dir_sy) con pasos
-    let steps = 8;
+    // flecha/dirección proporcional al tamaño del minimapa
+    let dir_len_world = (block_size as f32).max(24.0); // longitud en coordenadas del mundo
+    let dir_len = dir_len_world * scale;
+    let dir_x = px + player.a.cos() * dir_len;
+    let dir_y = py + player.a.sin() * dir_len;
+    let steps = 6usize;
+    framebuffer.set_current_color(Color::WHITE);
     for s in 1..=steps {
         let t = s as f32 / steps as f32;
-        let lx = px + (dir_sx - px) * t;
-        let ly = py + (dir_sy - py) * t;
+        let lx = px + (dir_x - px) * t;
+        let ly = py + (dir_y - py) * t;
         framebuffer.set_pixel(lx as i32, ly as i32);
     }
 
-    // Dibujar enemigos como puntos rojos
+    // Dibujar enemigos
     let enemy_color = Color::new(220, 40, 40, 255);
     for e in enemies {
-        let ex = origin_x as f32 + e.pos.x * scale;
-        let ey = origin_y as f32 + e.pos.y * scale;
+        let ex = inner_offset_x + e.pos.x * scale;
+        let ey = inner_offset_y + e.pos.y * scale;
         let exi = ex as i32;
         let eyi = ey as i32;
         framebuffer.set_current_color(enemy_color);
@@ -373,20 +435,19 @@ pub fn draw_minimap(
         }
     }
 
-    // Borde del minimapa (opcional)
-    let border_color = Color::new(220, 220, 220, 160);
+    // Borde del minimapa
+    let border_color = Color::new(220, 220, 220, 180);
     framebuffer.set_current_color(border_color);
-    // superior/inferior
     for x in 0..MAP_W {
         framebuffer.set_pixel((origin_x + x) as i32, origin_y as i32);
         framebuffer.set_pixel((origin_x + x) as i32, (origin_y + MAP_H - 1) as i32);
     }
-    // izquierda/derecha
     for y in 0..MAP_H {
         framebuffer.set_pixel(origin_x as i32, (origin_y + y) as i32);
         framebuffer.set_pixel((origin_x + MAP_W - 1) as i32, (origin_y + y) as i32);
     }
 }
+
 
 
 
@@ -409,7 +470,7 @@ fn main() {
     framebuffer.set_background_color(Color::new(50, 50, 100, 255));
 
     // Load the maze once before the loop
-    let maze = load_maze("./maze.txt");
+    let maze = load_maze("./maze_even.txt");
     let mut player = Player{pos:(Vector2::new(180.0,180.0)), a: PI/3.0, fov: PI/2.0 };
     let texture_cache = TextureManager::new(&mut window, &raylib_thread);
     let mut depth_buffer = vec![f32::INFINITY; window_width as usize];
