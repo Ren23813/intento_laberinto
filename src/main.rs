@@ -157,6 +157,7 @@ pub fn render_world(
     maze: &Maze,
     texture_cache: &TextureManager,
     depth_buffer: &mut [f32],
+    current_level: usize,
 ) {
     let block_size = 100;
     let num_rays = framebuffer.width as usize;
@@ -201,8 +202,13 @@ pub fn render_world(
         for y in stake_top..stake_bottom {
             let tx = intersect.tx;
             let ty = (y as f32 - stake_top as f32) / (stake_bottom as f32 - stake_top as f32) * 128.0;
-
-            let color = texture_cache.get_pixel_color(intersect.impact, tx as u32, ty as u32);
+            let impact = intersect.impact;
+            let tex_key = if impact == 'L' {
+                std::char::from_digit(current_level as u32, 10).unwrap_or('L')
+            } else {
+                impact
+            };
+            let color = texture_cache.get_pixel_color(tex_key, tx as u32, ty as u32);
             framebuffer.set_current_color(color);
             framebuffer.set_pixel(i as i32, y as i32);
         }
@@ -845,7 +851,7 @@ fn main() {
         }
         else {
             for d in depth_buffer.iter_mut() { *d = f32::INFINITY; }
-            render_world(&mut framebuffer,&player,&maze,&texture_cache,&mut depth_buffer);
+            render_world(&mut framebuffer,&player,&maze,&texture_cache,&mut depth_buffer,current_level as usize);
             render_enemies(&mut framebuffer, &player, &texture_cache, &depth_buffer, &enemies);
             draw_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
         }

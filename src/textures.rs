@@ -22,7 +22,9 @@ impl TextureManager {
             ('e', "assets/jack1.png"),
             ('E',"assets/jack2.png"),
             ('c',"assets/techo.png"),
-            ('-',"assets/uvgLogo.png")
+            ('-',"assets/uvgLogo.png"),
+            ('3',"assets/L_3.png"),
+            //los otros
         ];
 
         for (ch, path) in texture_files {
