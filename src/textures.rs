@@ -24,7 +24,10 @@ impl TextureManager {
             ('c',"assets/techo.png"),
             ('-',"assets/uvgLogo.png"),
             ('3',"assets/L_3.png"),
-            //los otros
+            ('4',"assets/L_4.png"),
+            ('5',"assets/L_5.png"),
+            ('6',"assets/L_6.png"),
+            ('7',"assets/L_7.png"), 
         ];
 
         for (ch, path) in texture_files {
