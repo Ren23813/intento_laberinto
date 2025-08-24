@@ -84,7 +84,7 @@ impl Enemy {
         if maze.get(j).map_or(true, |row| i >= row.len()) { return false; }
 
         match maze[j][i] {
-            ' ' | 'g' => true,
+            ' ' | 'g' | 's' => true,
             _ => false,
         }
     }

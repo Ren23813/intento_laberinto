@@ -47,7 +47,7 @@ pub fn cast_ray(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, a: 
             };
         }
 
-        if maze[j][i] != ' ' {
+        if maze[j][i] != ' ' && maze[j][i] != 's' {
         let hitx = x - i*block_size;
         let hity = y - j * block_size;
         let mut maxhit = hity; 
