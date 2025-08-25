@@ -59,7 +59,8 @@ pub fn render_maze(
     framebuffer: &mut Framebuffer,
     maze: &Maze,
     block_size: usize,
-    player: &Player
+    player: &Player,
+    current_level: usize
 ) {
     // Padding en píxeles alrededor del mapa 2D
     let pad = 16.0_f32;
@@ -127,7 +128,7 @@ pub fn render_maze(
         let current_ray = i as f32 / num_rays as f32;
         let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
         // pedimos pero sin dibujar
-        let intersect = cast_ray(framebuffer, maze, player, a, block_size, false);
+        let intersect = cast_ray(framebuffer, maze, player, a, block_size, false, current_level == 7);
 
         // Punto de impacto en coordenadas del mundo
         let d = intersect.distance;
@@ -165,7 +166,7 @@ pub fn render_world(
     let hh = framebuffer.height as f32 / 2.0;
 
     //techo
-    let ceiling_tex_key = 'c'; 
+    let ceiling_tex_key = if current_level == 7 { 'k' } else { 'c' }; 
     let tex_width = 578.0;
     let tex_height = 347.0;
     for y in 0..hh as usize {
@@ -183,7 +184,7 @@ pub fn render_world(
     for i in 0..num_rays {
         let current_ray = i as f32 / num_rays as f32;
         let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
-        let intersect = cast_ray(framebuffer, maze, player, a, block_size, false);
+        let intersect = cast_ray(framebuffer, maze, player, a, block_size, false, current_level == 7);
         depth_buffer[i] = intersect.distance;
 
         let angle_diff = a - player.a;
@@ -201,7 +202,10 @@ pub fn render_world(
         // --- Pared ---
         for y in stake_top..stake_bottom {
             let tx = intersect.tx;
-            let ty = (y as f32 - stake_top as f32) / (stake_bottom as f32 - stake_top as f32) * 128.0;
+            let ty = (y as f32 - stake_top as f32)
+                / (stake_bottom as f32 - stake_top as f32)
+                * 128.0;
+
             let impact = intersect.impact;
             let tex_key = if impact == 'L' {
                 std::char::from_digit(current_level as u32, 10).unwrap_or('L')
@@ -340,8 +344,55 @@ fn render_enemies(
     }
 }
 
+/// Dibuja las casillas 'g' como billboards usando draw_sprite() (con la textura 'p').
+fn render_goal_sprites(
+    framebuffer: &mut Framebuffer,
+    player: &Player,
+    maze: &Maze,
+    texture_cache: &TextureManager,
+    depth_buffer: &[f32],
+    current_level: usize,
+) {
+    // solo en nivel final
+    if current_level != 7 {
+        return;
+    }
+
+    let block_size = 100usize;
+    let offset_pixels = 12.0_f32;
+
+    for (j, row) in maze.iter().enumerate() {
+        for (i, &ch) in row.iter().enumerate() {
+            if ch != 'g' { continue; }
+
+            // centro de la celda en coords mundo
+            let gx = i as f32 * block_size as f32 + block_size as f32 * 0.5;
+            let gy = j as f32 * block_size as f32 + block_size as f32 * 0.5;
+
+            // desplazar ligeramente hacia el jugador para evitar empate exacto con la pared
+            let vx = player.pos.x - gx;
+            let vy = player.pos.y - gy;
+            let dist = (vx*vx + vy*vy).sqrt();
+            let (sx, sy) = if dist > 0.0001 {
+                // colocar el sprite 'offset_pixels' más cerca del jugador
+                let ux = vx / dist;
+                let uy = vy / dist;
+                (gx + ux * offset_pixels, gy + uy * offset_pixels)
+            } else {
+                // si estás exactamente en el centro, no desplazar
+                (gx, gy)
+            };
+
+            // crear enemy temporal con la key 'p' (la estatua) y dibujarlo con draw_sprite
+            let tmp = Enemy::new(sx, sy, vec!['p'], 1);
+            draw_sprite(framebuffer, player, &tmp, texture_cache, depth_buffer);
+        }
+    }
+}
+
+
 /// Dibuja un minimapa en la esquina inferior derecha del framebuffer.
-/// - `block_size` es el tamaño (en px) de una celda del mundo (tú usas 100).
+/// - `block_size` es el tamaño (en px) de una celda del mundo (100).
 pub fn draw_minimap(
     framebuffer: &mut Framebuffer,
     maze: &Maze,
@@ -797,8 +848,7 @@ fn main() {
                 let new_maze = load_maze(filename);
 
                 // --- COLOCAR JUGADOR en la misma CELDA (pi,pj) del mapa anterior ---
-                // --- COLOCAR JUGADOR en la misma CELDA (pi,pj) del mapa anterior ---
-                // Nueva lógica: si el nuevo mapa contiene 's' úsalo; si no, usar prev_exit como antes.
+                // si el nuevo mapa contiene 's' úsalo; si no, usar prev_exit como antes.
                 if let Some((si, sj)) = find_tile(&new_maze, 's') {
                     // spawn explícito en la 's' del nuevo mapa (útil para mapa final 7)
                     player.pos = tile_center_pos(si, sj, block_size);
@@ -860,12 +910,13 @@ fn main() {
 
 
         if mode == "2D"{
-            render_maze(&mut framebuffer, &maze, block_size,&player);
+            render_maze(&mut framebuffer, &maze, block_size,&player,current_level as usize);
         }
         else {
             for d in depth_buffer.iter_mut() { *d = f32::INFINITY; }
             render_world(&mut framebuffer,&player,&maze,&texture_cache,&mut depth_buffer,current_level as usize);
             render_enemies(&mut framebuffer, &player, &texture_cache, &depth_buffer, &enemies);
+            render_goal_sprites(&mut framebuffer, &player, &maze, &texture_cache, &depth_buffer, current_level as usize);
             draw_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
         }
 
@@ -874,7 +925,7 @@ fn main() {
             let text = format!("FPS: {}", fps);
             framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
 
-            let piso_text = format!("piso {}", current_level);
+            let piso_text = format!("Piso {}", current_level);
             let font_size = 28;
             // ancho aproximado (estimación) para centrar: asumir 0.6 * font_size por carácter
             let approx_text_width = piso_text.len() as f32 * (font_size as f32) * 0.6;
@@ -922,8 +973,6 @@ fn main() {
             framebuffer.draw_vignette(center_x, center_y, radius, darkness);
             framebuffer.swap_buffers(&mut window, &raylib_thread);
         }
-                // thread::sleep(Duration::from_millis(1));
-
     }
 
     unsafe {

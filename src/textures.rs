@@ -27,7 +27,9 @@ impl TextureManager {
             ('4',"assets/L_4.png"),
             ('5',"assets/L_5.png"),
             ('6',"assets/L_6.png"),
-            ('7',"assets/L_7.png"), 
+            ('7',"assets/L_7.png"),
+            ('k',"assets/sky.png"),
+            ('p',"assets/estatua.png")
         ];
 
         for (ch, path) in texture_files {

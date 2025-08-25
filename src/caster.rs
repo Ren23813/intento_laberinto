@@ -12,7 +12,15 @@ pub struct Intersect {
     pub tx: usize,
 }
 
-pub fn cast_ray(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, a: f32, block_size: usize, draw_line: bool) -> Intersect {
+pub fn cast_ray(
+    framebuffer: &mut Framebuffer,
+    maze: &Maze,
+    player: &Player,
+    a: f32,
+    block_size: usize,
+    draw_line: bool,
+    ignore_goal: bool,
+) -> Intersect {
     let mut d = 0.0;
     let maze_height = maze.len();
     let maze_width = if maze_height > 0 { maze[0].len() } else { 0 };
@@ -27,40 +35,44 @@ pub fn cast_ray(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, a: 
 
         let i = x / block_size;
         let j = y / block_size;
-        
 
         // Verificar si el rayo se sale de los límites del laberinto
         if j >= maze_height || i >= maze_width {
-        let hitx = x - i*block_size;
-        let hity = y - j * block_size;
-        let mut maxhit = hity; 
+            let hitx = x - i*block_size;
+            let hity = y - j * block_size;
+            let mut maxhit = hity;
 
-        if 1 <hitx && hitx < block_size -1 {
-            maxhit = hitx;
-        }
-        let tx = (maxhit  * 200 )/block_size;
+            if 1 < hitx && hitx < block_size - 1 {
+                maxhit = hitx;
+            }
+            let tx = (maxhit * 200) / block_size;
 
             return Intersect {
                 distance: d,
                 impact: ' ',  // Rayo sale del laberinto
-                tx:tx
+                tx: tx
             };
         }
 
-        if maze[j][i] != ' ' && maze[j][i] != 's' {
-        let hitx = x - i*block_size;
-        let hity = y - j * block_size;
-        let mut maxhit = hity; 
+        // decidir si esta celda la tratamos como pared:
+        let cell = maze[j][i];
+        let is_goal = cell == 'g';
+        let is_wall = !(cell == ' ' || cell == 's' || (ignore_goal && is_goal));
 
-        if 1 <hitx && hitx < block_size -1 {
-            maxhit = hitx;
-        }
-        let tx = (maxhit  * 200) /block_size;
+        if is_wall {
+            let hitx = x - i*block_size;
+            let hity = y - j * block_size;
+            let mut maxhit = hity;
+
+            if 1 < hitx && hitx < block_size - 1 {
+                maxhit = hitx;
+            }
+            let tx = (maxhit * 200) / block_size;
 
             return Intersect {
                 distance: d,
-                impact: maze[j][i],  // Pared encontrada
-                tx:tx
+                impact: cell,  
+                tx: tx
             };
         }
 
@@ -76,11 +88,11 @@ pub fn cast_ray(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player, a: 
         }
     }
 
-    // Si no se encuentra nada, retornar un impacto vacío
     Intersect {
         distance: d,
-        impact: ' ', // ''
+        impact: ' ',
         tx: 0
     }
 }
+
  
