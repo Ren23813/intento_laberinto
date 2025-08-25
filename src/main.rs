@@ -732,6 +732,118 @@ fn find_spawn_reachable(
     }
 }
 
+fn title_screen(
+    window: &mut RaylibHandle,
+    thread: &RaylibThread,
+    fb_w: i32,
+    fb_h: i32,
+    levels: &[i32],
+) -> Option<i32> {
+    // Creamos un framebuffer temporal para el título (misma clase que usas)
+    let mut framebuffer = crate::framebuffer::Framebuffer::new(fb_w, fb_h, Color::BLACK);
+
+    let menu_items = ["Iniciar (nivel 3)", "Seleccionar nivel", "Salir"];
+    let mut menu_idx: usize = 0;
+    let mut selecting_level = false;
+    // índice dentro de levels
+    let mut level_choice: usize = 0;
+
+    // bucle del menu
+    while !window.window_should_close() {
+        framebuffer.clear();
+
+        // entrada
+        if window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+            return None; // salir
+        }
+
+        if !selecting_level {
+            if window.is_key_pressed(KeyboardKey::KEY_UP) {
+                if menu_idx == 0 { menu_idx = menu_items.len() - 1; } else { menu_idx -= 1; }
+            }
+            if window.is_key_pressed(KeyboardKey::KEY_DOWN) {
+                menu_idx = (menu_idx + 1) % menu_items.len();
+            }
+            if window.is_key_pressed(KeyboardKey::KEY_ENTER) {
+                match menu_idx {
+                    0 => {
+                        // iniciar en el primer nivel (levels[0])
+                        return Some(levels[0]);
+                    }
+                    1 => {
+                        // pasar al submodo "seleccionar nivel"
+                        selecting_level = true;
+                        level_choice = 0; // por defecto al primer nivel (3)
+                    }
+                    2 => {
+                        return None; // salir
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            // en modo seleccionar nivel: izquierda/derecha para cambiar, Enter confirma, Esc cancela
+            if window.is_key_pressed(KeyboardKey::KEY_LEFT) {
+                if level_choice == 0 { level_choice = levels.len() - 1; } else { level_choice -= 1; }
+            }
+            if window.is_key_pressed(KeyboardKey::KEY_RIGHT) {
+                level_choice = (level_choice + 1) % levels.len();
+            }
+            if window.is_key_pressed(KeyboardKey::KEY_ENTER) {
+                return Some(levels[level_choice]);
+            }
+            if window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+                selecting_level = false; // volver al menú principal
+            }
+        }
+
+        // dibujado simple
+        let title = "Five Floors at UVG";
+        let subtitle = "Usa las flechas para navegar y moverte, y la E para avanzar entre niveles. Esc para salir";
+
+        // Centro x aproximado (tu framebuffer tiene draw_text)
+        let title_x = (framebuffer.width / 2) - 180;
+        let mut y = 120;
+        framebuffer.draw_text(title, title_x, y, 48, Color::GREEN);
+        y += 64;
+        framebuffer.draw_text(subtitle, title_x - 200, y, 20, Color::WHITE);
+        y += 54;
+
+        // menú
+        for (i, item) in menu_items.iter().enumerate() {
+            let color = if menu_idx == i && !selecting_level {
+                Color::PERU
+            } else {
+                Color::WHITE
+            };
+            framebuffer.draw_text(item, title_x - 100, y, 28, color);
+            y += 42;
+        }
+
+        // si estamos en modo seleccionar nivel, mostrar selector
+        if selecting_level {
+            y += 8;
+            let info = format!("Seleccionar nivel:   <  {}  >",
+                               levels[level_choice]);
+            framebuffer.draw_text(&info, title_x - 100, y, 28, Color::GREEN);
+            y += 40;
+            framebuffer.draw_text("Presiona Enter para empezar con el nivel seleccionado", title_x - 160, y, 16, Color::WHITE);
+        } else {
+            y += 8;
+            framebuffer.draw_text("Pulsa Enter para seleccionar la opción", title_x - 100, y, 18, Color::WHITE);
+        }
+
+        // swap al final de frame
+        framebuffer.swap_buffers(window, thread);
+
+        // pequeña espera para evitar quemar CPU (opcional)
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    // si se cerró la ventana por la X
+    None
+}
+
 
 fn main() {
     let window_width = 1300;
@@ -740,7 +852,7 @@ fn main() {
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
-        .title("Raycaster Example")
+        .title("Five Floors at UVG")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
     unsafe {
@@ -751,234 +863,239 @@ fn main() {
     let mut framebuffer = Framebuffer::new(window_width as i32, window_height as i32,Color::BLACK);
     framebuffer.set_background_color(Color::new(50, 50, 100, 255));
 
-    let levels = vec![3, 4, 5, 6, 7]; // pisos
-    let mut level_index: usize = 0; // comienza en levels[0] = piso 3
-    let mut current_level = levels[level_index];
+    let levels = vec![3,4,5,6,7]; // definir niveles aquí temprano
+    if let Some(start_level) = title_screen(&mut window, &raylib_thread, window_width as i32, window_height as i32, &levels) {
+        let mut level_index = levels.iter().position(|&lv| lv == start_level).unwrap_or(0);
+        let mut current_level = levels[level_index];
 
-    // Load the maze once before the loop
-    let mut maze = load_maze(maze_filename_for_level(current_level));
-    let player_pos = if let Some((si, sj)) = find_tile(&maze, 's') {
-        tile_center_pos(si, sj, block_size)
-    } else if let Some((gi, gj)) = find_tile(&maze, 'g') {
-        tile_center_pos(gi, gj, block_size)
-    } else {
-        let temp_player = Vector2::new((block_size/2) as f32, (block_size/2) as f32);
-        find_spawn_reachable(&maze, block_size, temp_player, 0)
-    };
-    let mut player = Player{pos:player_pos, a: PI/3.0, fov: PI/2.0 };
-    let texture_cache = TextureManager::new(&mut window, &raylib_thread);
-    let mut depth_buffer = vec![f32::INFINITY; window_width as usize];
-    let mut enemies = vec![Enemy::new(250.0, 250.0, vec!['e', 'E'], 20)];
-    let mut lives: i32 = 3;
-    let max_lives: i32 = 3;
-    let mut invuln_timer: f32 = 0.0;
-    const INVULN_DURATION: f32 = 1.5_f32; 
-    let base_enemy_speed = 2.7_f32;
-    let mut levels_passed: usize = 0; 
+        // Load the maze once before the loop
+        let mut maze = load_maze(maze_filename_for_level(current_level));
+        let player_pos = if let Some((si, sj)) = find_tile(&maze, 's') {
+            tile_center_pos(si, sj, block_size)
+        } else if let Some((gi, gj)) = find_tile(&maze, 'g') {
+            tile_center_pos(gi, gj, block_size)
+        } else {
+            let temp_player = Vector2::new((block_size/2) as f32, (block_size/2) as f32);
+            find_spawn_reachable(&maze, block_size, temp_player, 0)
+        };
+        let mut player = Player{pos:player_pos, a: PI/3.0, fov: PI/2.0 };
+        let texture_cache = TextureManager::new(&mut window, &raylib_thread);
+        let mut depth_buffer = vec![f32::INFINITY; window_width as usize];
+        let mut enemies = vec![Enemy::new(375.0, 400.0, vec!['e', 'E'], 20)];
+        let mut lives: i32 = 3;
+        let max_lives: i32 = 3;
+        let mut invuln_timer: f32 = 0.0;
+        const INVULN_DURATION: f32 = 1.5_f32; 
+        let base_enemy_speed = 2.9_f32;
+        let mut levels_passed: usize = 0; 
 
-    let hit_path = CString::new("assets/hit_sound.wav").expect("CString::new failed");
-    let hit_sound = unsafe { ffi::LoadSound(hit_path.as_ptr()) };
-    let music_path = CString::new("assets/music.ogg").expect("CString::new failed");
-    let music = unsafe { ffi::LoadMusicStream(music_path.as_ptr()) };
-    unsafe { ffi::PlayMusicStream(music); }
+        let hit_path = CString::new("assets/hit_sound.wav").expect("CString::new failed");
+        let hit_sound = unsafe { ffi::LoadSound(hit_path.as_ptr()) };
+        let music_path = CString::new("assets/music.ogg").expect("CString::new failed");
+        let music = unsafe { ffi::LoadMusicStream(music_path.as_ptr()) };
+        unsafe { ffi::PlayMusicStream(music); }
 
-    let mut level_transition_cooldown: f32 = 0.0;
-    const LEVEL_TRANSITION_COOLDOWN: f32 = 0.6_f32;
+        let mut level_transition_cooldown: f32 = 0.0;
+        const LEVEL_TRANSITION_COOLDOWN: f32 = 0.6_f32;
 
-    while !window.window_should_close() {
-        unsafe { ffi::UpdateMusicStream(music); }
-        let dt = 1.0_f32 / 60.0_f32;
-        if level_transition_cooldown > 0.0 {
-            level_transition_cooldown -= dt;
-            if level_transition_cooldown < 0.0 { level_transition_cooldown = 0.0; }
-        }
-
-        framebuffer.clear();
-        process_events(&window, &mut player, &maze);
-        // 1. clear framebuffer
-        let mut mode = "3D";
-        let enemy_speed = base_enemy_speed + 0.2_f32 * (levels_passed as f32);
-        for e in enemies.iter_mut() {
-            e.update(&player, &maze, block_size, enemy_speed);
-        }
-                if invuln_timer > 0.0 {
-                    invuln_timer -= dt;
-                    if invuln_timer < 0.0 { invuln_timer = 0.0; }
-                }
-
-        let collision_radius = 28.0_f32; // radio en pixeles para considerar "contacto"
-        for enemy in enemies.iter_mut() {
-            let dx = enemy.pos.x - player.pos.x;
-            let dy = enemy.pos.y - player.pos.y;
-            let dist = (dx*dx + dy*dy).sqrt();
-
-            if dist <= collision_radius && invuln_timer <= 0.0 && lives > 0 {
-                // perder 1 vida
-                lives -= 1;
-                invuln_timer = INVULN_DURATION;
-
-                // reproducir sonido si existe
-                unsafe {
-                    ffi::PlaySound(hit_sound);
-                }
-                break;
+        while !window.window_should_close() {
+            unsafe { ffi::UpdateMusicStream(music); }
+            let dt = 1.0_f32 / 60.0_f32;
+            if level_transition_cooldown > 0.0 {
+                level_transition_cooldown -= dt;
+                if level_transition_cooldown < 0.0 { level_transition_cooldown = 0.0; }
             }
-        }
-        // Encolar estado de vidas para que el framebuffer lo dibuje en swap_buffers
-        framebuffer.queue_health(lives, max_lives);
 
-        if window.is_key_down(KeyboardKey::KEY_M) {
-            mode = if mode =="2D" {"3D"} else {"2D"};
-        }
-
-        let cell_i = ((player.pos.x / block_size as f32).floor() as isize).max(0) as usize;
-        let cell_j = ((player.pos.y / block_size as f32).floor() as isize).max(0) as usize;
-        let at_exit = maze.get(cell_j).and_then(|row| row.get(cell_i)).map_or(false, |&c| c == 'g');
-
-        if at_exit && window.is_key_pressed(KeyboardKey::KEY_E) {
-            // guardamos coordenada de salida en el mapa antiguo (la 'g' donde el jugador estaba)
-            let prev_exit = Some((cell_i, cell_j));
-
-            // avanzar de nivel (si hay)
-            if level_index + 1 < levels.len() {
-                level_index += 1;
-                current_level = levels[level_index];
-                // re-cargar maze nuevo (destino)
-                let filename = maze_filename_for_level(current_level);
-                let new_maze = load_maze(filename);
-
-                // --- COLOCAR JUGADOR en la misma CELDA (pi,pj) del mapa anterior ---
-                // si el nuevo mapa contiene 's' úsalo; si no, usar prev_exit como antes.
-                if let Some((si, sj)) = find_tile(&new_maze, 's') {
-                    // spawn explícito en la 's' del nuevo mapa (útil para mapa final 7)
-                    player.pos = tile_center_pos(si, sj, block_size);
-                } else if let Some((pi, pj)) = prev_exit {
-                    let maze_h_new = new_maze.len();
-                    let maze_w_new = if maze_h_new > 0 { new_maze[0].len() } else { 0 };
-
-                    if maze_w_new == 0 || maze_h_new == 0 {
-                        player.pos = find_nearest_free_to_center(&new_maze, block_size);
-                    } else if pi < maze_w_new && pj < maze_h_new {
-                        let ch = new_maze[pj][pi];
-                        if ch == ' ' || ch == 'g' {
-                            player.pos = tile_center_pos(pi, pj, block_size);
-                        } else {
-                            player.pos = find_nearest_free_around(&new_maze, block_size, pi, pj, 8);
-                        }
-                    } else {
-                        let clamped_i = if maze_w_new == 0 { 0 } else { pi.min(maze_w_new.saturating_sub(1)) };
-                        let clamped_j = if maze_h_new == 0 { 0 } else { pj.min(maze_h_new.saturating_sub(1)) };
-                        player.pos = find_nearest_free_around(&new_maze, block_size, clamped_i, clamped_j, 8);
+            framebuffer.clear();
+            process_events(&window, &mut player, &maze);
+            // 1. clear framebuffer
+            let mut mode = "3D";
+            let enemy_speed = base_enemy_speed + 0.2_f32 * (levels_passed as f32);
+            for e in enemies.iter_mut() {
+                e.update(&player, &maze, block_size, enemy_speed);
+            }
+                    if invuln_timer > 0.0 {
+                        invuln_timer -= dt;
+                        if invuln_timer < 0.0 { invuln_timer = 0.0; }
                     }
-                } else {
-                    // fallback si no hay prev_exit ni 's'
-                    player.pos = find_nearest_free_to_center(&new_maze, block_size);
-                }
 
-                player.a = PI / 3.0; // reiniciar la rotación
-                let enemy_spawn = find_spawn_reachable(&new_maze, block_size, player.pos, 3);
-                enemies = vec![Enemy::new(enemy_spawn.x, enemy_spawn.y, vec!['e','E'], 20)];
-                // refill vidas
-                lives = max_lives;
-                invuln_timer = 0.0;
-                // aumentar contador de niveles completados
-                levels_passed += 1;
-                // re-asignar el maze cargado (nuevo)
-                maze = new_maze;
-                // cooldown para evitar triggers repetidos
-                level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
-            } else {
-                // último nivel: reiniciamos al primero (o podrías mostrar pantalla de victoria)
-                println!("Has llegado al final (piso {}). Reiniciando.", current_level);
-                level_index = 0;
-                current_level = levels[level_index];
-                maze = load_maze(maze_filename_for_level(current_level));
-                // spawn player en la 'g' si existe, o centro libre
-                if let Some((gi, gj)) = find_tile(&maze, 'g') {
-                    player.pos = tile_center_pos(gi, gj, block_size);
-                } else {
-                    player.pos = find_nearest_free_to_center(&maze, block_size);
-                }
-                // reset enemigo al centro del nuevo mapa
-                let ec = find_nearest_free_to_center(&maze, block_size);
-                enemies = vec![Enemy::new(ec.x, ec.y, vec!['e', 'E'], 20)];
-                lives = max_lives;
-                levels_passed = 0;
-                level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
-            }
-        }
-
-
-        if mode == "2D"{
-            render_maze(&mut framebuffer, &maze, block_size,&player,current_level as usize);
-        }
-        else {
-            for d in depth_buffer.iter_mut() { *d = f32::INFINITY; }
-            render_world(&mut framebuffer,&player,&maze,&texture_cache,&mut depth_buffer,current_level as usize);
-            render_enemies(&mut framebuffer, &player, &texture_cache, &depth_buffer, &enemies);
-            render_goal_sprites(&mut framebuffer, &player, &maze, &texture_cache, &depth_buffer, current_level as usize);
-            draw_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
-        }
-
-        {
-            let fps = window.get_fps();
-            let text = format!("FPS: {}", fps);
-            framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
-
-            let piso_text = format!("Piso {}", current_level);
-            let font_size = 28;
-            // ancho aproximado (estimación) para centrar: asumir 0.6 * font_size por carácter
-            let approx_text_width = piso_text.len() as f32 * (font_size as f32) * 0.6;
-            let x_center = (framebuffer.width as f32 / 2.0 - approx_text_width / 2.0) as i32;
-            framebuffer.draw_text(&piso_text, x_center, 6, font_size, Color::YELLOW);
-
-            // Calcula la distancia mínima del jugador a cualquier enemigo
-            let mut min_enemy_dist = f32::INFINITY;
-            for enemy in enemies.iter() {
+            let collision_radius = 28.0_f32; // radio en pixeles para considerar "contacto"
+            for enemy in enemies.iter_mut() {
                 let dx = enemy.pos.x - player.pos.x;
                 let dy = enemy.pos.y - player.pos.y;
-                let d = (dx*dx + dy*dy).sqrt();
-                if d < min_enemy_dist { min_enemy_dist = d; }
+                let dist = (dx*dx + dy*dy).sqrt();
+
+                if dist <= collision_radius && invuln_timer <= 0.0 && lives > 0 {
+                    // perder 1 vida
+                    lives -= 1;
+                    invuln_timer = INVULN_DURATION;
+
+                    // reproducir sonido si existe
+                    unsafe {
+                        ffi::PlaySound(hit_sound);
+                    }
+                    break;
+                }
+            }
+            // Encolar estado de vidas para que el framebuffer lo dibuje en swap_buffers
+            framebuffer.queue_health(lives, max_lives);
+
+            if window.is_key_down(KeyboardKey::KEY_M) {
+                mode = if mode =="2D" {"3D"} else {"2D"};
             }
 
-            let max_effect_distance = 1500.0_f32; // comienza a afectar desde más lejos
-            let min_effect_distance = 80.0_f32;  // muy cerca = círculo mínimo
-            let max_radius = (framebuffer.width.min(framebuffer.height)) as f32 * 0.9; // radio máximo
-            let min_radius = 40.0_f32; // radio mínimo visible al acercarse mucho
+            let cell_i = ((player.pos.x / block_size as f32).floor() as isize).max(0) as usize;
+            let cell_j = ((player.pos.y / block_size as f32).floor() as isize).max(0) as usize;
+            let at_exit = maze.get(cell_j).and_then(|row| row.get(cell_i)).map_or(false, |&c| c == 'g');
 
-            // oscuridad base
-            let min_darkness = 0.5_f32; // lejos = oscuridad leve
-            let max_darkness = 1.0_f32; // cerca = oscuridad total
+            if at_exit && window.is_key_pressed(KeyboardKey::KEY_E) {
+                // guardamos coordenada de salida en el mapa antiguo (la 'g' donde el jugador estaba)
+                let prev_exit = Some((cell_i, cell_j));
 
-            // calcular factor de proximidad t en [0..1]
-            let t = if min_enemy_dist >= max_effect_distance {
-                0.0_f32
-            } else if min_enemy_dist <= min_effect_distance {
-                1.0_f32
-            } else {
-                (max_effect_distance - min_enemy_dist) / (max_effect_distance - min_effect_distance)
-            };
+                // avanzar de nivel (si hay)
+                if level_index + 1 < levels.len() {
+                    level_index += 1;
+                    current_level = levels[level_index];
+                    // re-cargar maze nuevo (destino)
+                    let filename = maze_filename_for_level(current_level);
+                    let new_maze = load_maze(filename);
 
-            // radio interpolado
-            let radius = max_radius * (1.0 - t) + min_radius * t;
+                    // --- COLOCAR JUGADOR en la misma CELDA (pi,pj) del mapa anterior ---
+                    // si el nuevo mapa contiene 's' úsalo; si no, usar prev_exit como antes.
+                    if let Some((si, sj)) = find_tile(&new_maze, 's') {
+                        // spawn explícito en la 's' del nuevo mapa (útil para mapa final 7)
+                        player.pos = tile_center_pos(si, sj, block_size);
+                    } else if let Some((pi, pj)) = prev_exit {
+                        let maze_h_new = new_maze.len();
+                        let maze_w_new = if maze_h_new > 0 { new_maze[0].len() } else { 0 };
 
-            // oscuridad interpolada
-            let darkness = min_darkness + (max_darkness - min_darkness) * t;
+                        if maze_w_new == 0 || maze_h_new == 0 {
+                            player.pos = find_nearest_free_to_center(&new_maze, block_size);
+                        } else if pi < maze_w_new && pj < maze_h_new {
+                            let ch = new_maze[pj][pi];
+                            if ch == ' ' || ch == 'g' {
+                                player.pos = tile_center_pos(pi, pj, block_size);
+                            } else {
+                                player.pos = find_nearest_free_around(&new_maze, block_size, pi, pj, 8);
+                            }
+                        } else {
+                            let clamped_i = if maze_w_new == 0 { 0 } else { pi.min(maze_w_new.saturating_sub(1)) };
+                            let clamped_j = if maze_h_new == 0 { 0 } else { pj.min(maze_h_new.saturating_sub(1)) };
+                            player.pos = find_nearest_free_around(&new_maze, block_size, clamped_i, clamped_j, 8);
+                        }
+                    } else {
+                        // fallback si no hay prev_exit ni 's'
+                        player.pos = find_nearest_free_to_center(&new_maze, block_size);
+                    }
 
-            // centro de pantalla (linterna centrada)
-            let center_x = (framebuffer.width / 2) as i32;
-            let center_y = (framebuffer.height / 2) as i32;
+                    player.a = PI / 3.0; // reiniciar la rotación
+                    let enemy_spawn = find_spawn_reachable(&new_maze, block_size, player.pos, 3);
+                    enemies = vec![Enemy::new(enemy_spawn.x, enemy_spawn.y, vec!['e','E'], 20)];
+                    // refill vidas
+                    lives = max_lives;
+                    invuln_timer = 0.0;
+                    // aumentar contador de niveles completados
+                    levels_passed += 1;
+                    // re-asignar el maze cargado (nuevo)
+                    maze = new_maze;
+                    // cooldown para evitar triggers repetidos
+                    level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
+                } else {
+                    // último nivel: reiniciamos al primero (o podrías mostrar pantalla de victoria)
+                    println!("Has llegado al final (piso {}). Reiniciando.", current_level);
+                    level_index = 0;
+                    current_level = levels[level_index];
+                    maze = load_maze(maze_filename_for_level(current_level));
+                    // spawn player en la 'g' si existe, o centro libre
+                    if let Some((gi, gj)) = find_tile(&maze, 'g') {
+                        player.pos = tile_center_pos(gi, gj, block_size);
+                    } else {
+                        player.pos = find_nearest_free_to_center(&maze, block_size);
+                    }
+                    // reset enemigo al centro del nuevo mapa
+                    let ec = find_nearest_free_to_center(&maze, block_size);
+                    enemies = vec![Enemy::new(ec.x, ec.y, vec!['e', 'E'], 20)];
+                    lives = max_lives;
+                    levels_passed = 0;
+                    level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
+                }
+            }
 
-            // aplicar efecto
-            framebuffer.draw_vignette(center_x, center_y, radius, darkness);
-            framebuffer.swap_buffers(&mut window, &raylib_thread);
+
+            if mode == "2D"{
+                render_maze(&mut framebuffer, &maze, block_size,&player,current_level as usize);
+            }
+            else {
+                for d in depth_buffer.iter_mut() { *d = f32::INFINITY; }
+                render_world(&mut framebuffer,&player,&maze,&texture_cache,&mut depth_buffer,current_level as usize);
+                render_enemies(&mut framebuffer, &player, &texture_cache, &depth_buffer, &enemies);
+                render_goal_sprites(&mut framebuffer, &player, &maze, &texture_cache, &depth_buffer, current_level as usize);
+                draw_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
+            }
+
+            {
+                let fps = window.get_fps();
+                let text = format!("FPS: {}", fps);
+                framebuffer.draw_text(&text, 10, 10, 20, Color::WHITE); // <- nuevo método
+
+                let piso_text = format!("Piso {}", current_level);
+                let font_size = 28;
+                // ancho aproximado (estimación) para centrar: asumir 0.6 * font_size por carácter
+                let approx_text_width = piso_text.len() as f32 * (font_size as f32) * 0.6;
+                let x_center = (framebuffer.width as f32 / 2.0 - approx_text_width / 2.0) as i32;
+                framebuffer.draw_text(&piso_text, x_center, 6, font_size, Color::YELLOW);
+
+                // Calcula la distancia mínima del jugador a cualquier enemigo
+                let mut min_enemy_dist = f32::INFINITY;
+                for enemy in enemies.iter() {
+                    let dx = enemy.pos.x - player.pos.x;
+                    let dy = enemy.pos.y - player.pos.y;
+                    let d = (dx*dx + dy*dy).sqrt();
+                    if d < min_enemy_dist { min_enemy_dist = d; }
+                }
+
+                let max_effect_distance = 1500.0_f32; // comienza a afectar desde más lejos
+                let min_effect_distance = 80.0_f32;  // muy cerca = círculo mínimo
+                let max_radius = (framebuffer.width.min(framebuffer.height)) as f32 * 0.9; // radio máximo
+                let min_radius = 40.0_f32; // radio mínimo visible al acercarse mucho
+
+                // oscuridad base
+                let min_darkness = 0.5_f32; // lejos = oscuridad leve
+                let max_darkness = 1.0_f32; // cerca = oscuridad total
+
+                // calcular factor de proximidad t en [0..1]
+                let t = if min_enemy_dist >= max_effect_distance {
+                    0.0_f32
+                } else if min_enemy_dist <= min_effect_distance {
+                    1.0_f32
+                } else {
+                    (max_effect_distance - min_enemy_dist) / (max_effect_distance - min_effect_distance)
+                };
+
+                // radio interpolado
+                let radius = max_radius * (1.0 - t) + min_radius * t;
+
+                // oscuridad interpolada
+                let darkness = min_darkness + (max_darkness - min_darkness) * t;
+
+                // centro de pantalla (linterna centrada)
+                let center_x = (framebuffer.width / 2) as i32;
+                let center_y = (framebuffer.height / 2) as i32;
+
+                // aplicar efecto
+                framebuffer.draw_vignette(center_x, center_y, radius, darkness);
+                framebuffer.swap_buffers(&mut window, &raylib_thread);
+            }
+        }
+
+        unsafe {
+            ffi::UnloadSound(hit_sound);     // liberar memoria del sound
+            ffi::StopMusicStream(music);
+            ffi::UnloadMusicStream(music);
+            ffi::CloseAudioDevice();         // cerrar dispositivo de audio
         }
     }
-
-    unsafe {
-        ffi::UnloadSound(hit_sound);     // liberar memoria del sound
-        ffi::StopMusicStream(music);
-        ffi::UnloadMusicStream(music);
-        ffi::CloseAudioDevice();         // cerrar dispositivo de audio
+    else {
+        return;
     }
 }

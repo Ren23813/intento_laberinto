@@ -83,7 +83,7 @@ pub fn cast_ray(
         d += 1.0;
 
         // Evitar que el rayo recorra una distancia demasiado larga
-        if d > 2000.0 {
+        if d > 20000.0 {
             break;
         }
     }
