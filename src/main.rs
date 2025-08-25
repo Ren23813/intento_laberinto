@@ -845,6 +845,78 @@ fn title_screen(
 }
 
 
+fn end_screen(
+    window: &mut RaylibHandle,
+    thread: &RaylibThread,
+    fb_w: i32,
+    fb_h: i32,
+    title: &str,
+    message: &str,
+) -> Option<bool> {
+    let mut framebuffer = crate::framebuffer::Framebuffer::new(fb_w, fb_h, Color::BLACK);
+
+    let options = ["Reiniciar", "Salir"];
+    let mut idx: usize = 0;
+
+    while !window.window_should_close() {
+        framebuffer.clear();
+
+        // entrada
+        if window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+            return Some(false);
+        }
+        if window.is_key_pressed(KeyboardKey::KEY_LEFT) {
+            if idx == 0 { idx = options.len() - 1 } else { idx -= 1; }
+        }
+        if window.is_key_pressed(KeyboardKey::KEY_RIGHT) {
+            idx = (idx + 1) % options.len();
+        }
+        if window.is_key_pressed(KeyboardKey::KEY_ENTER) {
+            match idx {
+                0 => return Some(true),  // Reiniciar
+                1 => return Some(false), // Salir
+                _ => {}
+            }
+        }
+
+        // dibujado
+        let title_x = (framebuffer.width / 2) - 220;
+        let mut y = 120;
+        framebuffer.draw_text(title, title_x, y, 52, Color::GREEN);
+        y += 68;
+        framebuffer.draw_text(message, title_x - 60, y, 20, Color::WHITE);
+        y += 60;
+
+        // opciones
+        for (i, opt) in options.iter().enumerate() {
+            let color = if i == idx { Color::PERU } else { Color::WHITE };
+            framebuffer.draw_text(opt, title_x + (i as i32) * 180, y, 36, color);
+        }
+        framebuffer.swap_buffers(window, thread);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    None
+}
+
+fn victory_screen(
+    window: &mut RaylibHandle,
+    thread: &RaylibThread,
+    fb_w: i32,
+    fb_h: i32,
+) -> Option<bool> {
+    end_screen(window, thread, fb_w, fb_h, "¡Escapaste!", "Llegaste al último piso y escapaste de Jack. ¿Qué deseas hacer?")
+}
+
+fn game_over_screen(
+    window: &mut RaylibHandle,
+    thread: &RaylibThread,
+    fb_w: i32,
+    fb_h: i32,
+) -> Option<bool> {
+    end_screen(window, thread, fb_w, fb_h, "Game Over", "Has perdido todas tus vidas. Jack te capturó de por vida :(")
+}
+
+
 fn main() {
     let window_width = 1300;
     let window_height = 900;
@@ -937,6 +1009,40 @@ fn main() {
                     break;
                 }
             }
+
+            if lives <= 0 {
+                // asegurar no tener vidas negativas
+                lives = 0;
+                if let Some(choice_restart) = game_over_screen(&mut window, &raylib_thread, window_width as i32, window_height as i32) {
+                    if choice_restart {
+                        // Reiniciar juego (igual que reinicio tras victory)
+                        level_index = 0;
+                        current_level = levels[level_index];
+                        maze = load_maze(maze_filename_for_level(current_level));
+                        // spawn player en la 'g' si existe, o centro libre
+                        if let Some((gi, gj)) = find_tile(&maze, 'g') {
+                            player.pos = tile_center_pos(gi, gj, block_size);
+                        } else {
+                            player.pos = find_nearest_free_to_center(&maze, block_size);
+                        }
+                        // reset enemigo al centro del nuevo mapa
+                        let ec = find_nearest_free_to_center(&maze, block_size);
+                        enemies = vec![Enemy::new(250.0, 250.0, vec!['e', 'E'], 20)];
+                        lives = max_lives;
+                        invuln_timer = 0.0;
+                        levels_passed = 0;
+                        level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
+                        // continue game loop (se reinició)
+                    } else {
+                        // Salir del juego
+                        break;
+                    }
+                } else {
+                    // ventana cerrada por el usuario
+                    break;
+                }
+            }
+
             // Encolar estado de vidas para que el framebuffer lo dibuje en swap_buffers
             framebuffer.queue_health(lives, max_lives);
 
@@ -1000,25 +1106,37 @@ fn main() {
                     maze = new_maze;
                     // cooldown para evitar triggers repetidos
                     level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
-                } else {
-                    // último nivel: reiniciamos al primero (o podrías mostrar pantalla de victoria)
-                    println!("Has llegado al final (piso {}). Reiniciando.", current_level);
-                    level_index = 0;
-                    current_level = levels[level_index];
-                    maze = load_maze(maze_filename_for_level(current_level));
-                    // spawn player en la 'g' si existe, o centro libre
-                    if let Some((gi, gj)) = find_tile(&maze, 'g') {
-                        player.pos = tile_center_pos(gi, gj, block_size);
-                    } else {
-                        player.pos = find_nearest_free_to_center(&maze, block_size);
+                } 
+                else {
+                    // último nivel: pantalla de victoria
+                    if let Some(choice_restart) = victory_screen(&mut window, &raylib_thread, window_width as i32, window_height as i32) {
+                        if choice_restart {
+                            // reiniciar como antes (volver al primer nivel)
+                            level_index = 0;
+                            current_level = levels[level_index];
+                            maze = load_maze(maze_filename_for_level(current_level));
+                            // spawn player en la 'g' si existe, o centro libre
+                            if let Some((gi, gj)) = find_tile(&maze, 'g') {
+                                player.pos = tile_center_pos(gi, gj, block_size);
+                            } else {
+                                player.pos = find_nearest_free_to_center(&maze, block_size);
+                            }
+                            // reset enemigo al centro del nuevo mapa
+                            let ec = find_nearest_free_to_center(&maze, block_size);
+                            enemies = vec![Enemy::new(250.0, 250.0, vec!['e', 'E'], 20)];
+                            lives = max_lives;
+                            levels_passed = 0;
+                            level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
+                        } 
+                        else { //decidió salir
+                            break;
+                        }
+                    } 
+                    else {
+                        break;
                     }
-                    // reset enemigo al centro del nuevo mapa
-                    let ec = find_nearest_free_to_center(&maze, block_size);
-                    enemies = vec![Enemy::new(ec.x, ec.y, vec!['e', 'E'], 20)];
-                    lives = max_lives;
-                    levels_passed = 0;
-                    level_transition_cooldown = LEVEL_TRANSITION_COOLDOWN;
                 }
+
             }
 
 
